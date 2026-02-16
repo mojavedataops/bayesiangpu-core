@@ -1,0 +1,17 @@
+[package]
+name = "bayesian-diagnostics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCMC convergence diagnostics for BayesianGPU: R-hat, ESS, divergence tracking"
+
+[dependencies]
+# Minimal dependencies - just need basic math for diagnostics
+# These run on CPU after sampling is complete
+serde = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
+proptest = "1.4"
+rand = "0.8"
+rand_distr = "0.4"

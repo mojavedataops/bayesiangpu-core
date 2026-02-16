@@ -1,0 +1,18 @@
+# R package build artifacts
+*.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.tar.gz
+
+# Rust build artifacts
+src/rust/target/
+src/rust/Cargo.lock
+
+# Package build
+*.o
+*.so
+*.dll
+*.dylib
+bayesiangpu.Rcheck/
+docs/

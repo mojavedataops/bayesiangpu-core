@@ -1,0 +1,79 @@
+# images/r/Dockerfile.brms
+#
+# brms + Stan + OpenCL production image
+# Optimized for GPU-accelerated Bayesian inference in R
+#
+# Build: docker build -f Dockerfile.brms -t bayesiangpu/brms:latest .
+# Run:   docker run --gpus all -v $(pwd):/workspace bayesiangpu/brms:latest
+
+FROM rocker/r-ver:4.4.0 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Create non-root user for security (created early so UID/GID are consistent)
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g ${GID} bayesian && \
+    useradd -m -u ${UID} -g bayesian -s /bin/bash bayesian
+
+# Install OpenCL and build dependencies
+RUN apt-get update && apt-get install -y \
+    libopencl-clang-dev \
+    opencl-headers \
+    ocl-icd-opencl-dev \
+    pocl-opencl-icd \
+    clinfo \
+    libv8-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install R packages from CRAN
+RUN R -e "install.packages(c('renv', 'posterior', 'bayesplot', 'loo', 'tidyverse'), repos='https://cloud.r-project.org/')"
+
+# Install cmdstanr from R-universe (recommended installation method)
+RUN R -e "install.packages('cmdstanr', repos = c('https://mc-stan.org/r-packages/', getOption('repos')))"
+
+# Install brms
+RUN R -e "install.packages('brms', repos='https://cloud.r-project.org/')"
+
+# Install CmdStan with OpenCL support
+ENV CMDSTAN=/opt/cmdstan
+RUN R -e "cmdstanr::install_cmdstan(dir='/opt', cores=4, cpp_options=list(stan_opencl=TRUE))"
+
+# Create model cache directory
+RUN mkdir -p /workspace/cache
+ENV CMDSTAN_CACHE=/workspace/cache
+
+# Set cmdstan path for cmdstanr
+ENV CMDSTAN=/opt/cmdstan-2.35.0
+RUN R -e "cmdstanr::set_cmdstan_path('/opt/cmdstan-2.35.0')"
+
+WORKDIR /workspace
+VOLUME ["/workspace"]
+
+# Copy scripts
+COPY scripts/compile-model.R /opt/compile-model.R
+RUN chmod +x /opt/compile-model.R
+
+# Set ownership of workspace and cache to non-root user
+RUN chown -R bayesian:bayesian /workspace /opt/cmdstan* 2>/dev/null || true
+
+# Healthcheck - verify OpenCL is accessible and brms loads
+HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
+    CMD R --quiet -e "library(brms); library(cmdstanr); cmdstanr::cmdstan_path(); cat('OK\n')" || exit 1
+
+# Switch to non-root user
+USER bayesian
+
+# Default command: R REPL
+CMD ["R"]

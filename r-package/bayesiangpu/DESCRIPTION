@@ -1,0 +1,29 @@
+Package: bayesiangpu
+Title: GPU-Accelerated Bayesian Inference
+Version: 0.1.0
+Authors@R:
+    person("BayesianGPU", "Authors", email = "team@bayesiangpu.org", role = c("aut", "cre"))
+Description: GPU-accelerated Bayesian inference using the No-U-Turn Sampler (NUTS).
+    Provides a fluent API for building Bayesian models and running MCMC sampling
+    with automatic convergence diagnostics (R-hat, ESS). Built on top of a Rust
+    core library for performance.
+License: MIT + file LICENSE
+URL: https://github.com/mojavedataops/bayesiangpu-core
+BugReports: https://github.com/mojavedataops/bayesiangpu-core/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+SystemRequirements: Rust (>= 1.70), Cargo
+Config/rextendr/version: 0.3.1
+Imports:
+    R6,
+    tibble,
+    jsonlite
+Suggests:
+    testthat (>= 3.0.0),
+    ggplot2,
+    shiny,
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr

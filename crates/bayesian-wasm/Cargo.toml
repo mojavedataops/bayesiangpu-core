@@ -1,0 +1,76 @@
+[package]
+name = "bayesian-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM bindings for BayesianGPU"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook", "ndarray"]
+
+# CPU backend (default, works everywhere without async init)
+ndarray = ["burn/ndarray"]
+
+# GPU backend via Burn (requires WebGPU, async initialization)
+# IMPORTANT: Fusion is disabled for WASM - it causes "unreachable" panics in browser
+wgpu = [
+    "burn/wgpu",
+    "burn/autodiff",
+    "burn-wgpu",
+    "bayesian-core/wasm",
+    "bayesian-sampler/wasm",
+    "bayesian-rng/wasm",
+    "wasm-bindgen-futures",
+    "web-sys/Navigator",
+    "web-sys/Gpu",
+]
+
+# Direct wgpu compute shaders (bypasses Burn, works reliably in browser)
+direct-gpu = [
+    "dep:wgpu",
+    "dep:bytemuck",
+    "dep:futures-channel",
+    "wasm-bindgen-futures",
+]
+
+# Synchronous GPU execution for native Rust usage (not WASM)
+# Uses pollster to block on async GPU operations
+sync-gpu = [
+    "direct-gpu",
+    "dep:pollster",
+]
+
+[dependencies]
+bayesian-core = { path = "../bayesian-core", default-features = false }
+bayesian-sampler = { path = "../bayesian-sampler", default-features = false }
+bayesian-diagnostics = { path = "../bayesian-diagnostics" }
+bayesian-rng = { path = "../bayesian-rng", default-features = false }
+burn = { workspace = true, default-features = false }
+# Direct dependency on burn-wgpu to disable fusion for WASM (fusion causes "unreachable" panics)
+burn-wgpu = { workspace = true, default-features = false, features = ["std", "autotune"], optional = true }
+wasm-bindgen = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
+getrandom = { workspace = true }
+
+# Async support for WebGPU initialization
+wasm-bindgen-futures = { version = "0.4", optional = true }
+
+# Direct wgpu compute (bypasses Burn) - must match burn-wgpu version
+wgpu = { version = "26", optional = true, default-features = false, features = ["webgpu", "wgsl"] }
+bytemuck = { version = "1.14", optional = true, features = ["derive"] }
+futures-channel = { version = "0.3", optional = true }
+
+# Synchronous GPU execution for native Rust (blocks on async)
+pollster = { version = "0.4", optional = true }
+
+# Better panic messages in browser console
+console_error_panic_hook = { version = "0.1.7", optional = true }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

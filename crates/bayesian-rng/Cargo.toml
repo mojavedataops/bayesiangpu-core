@@ -1,0 +1,21 @@
+[package]
+name = "bayesian-rng"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPU-accelerated random number generation for BayesianGPU"
+
+[features]
+default = ["wgpu"]
+wgpu = ["burn/wgpu"]
+# Feature for WASM builds
+wasm = ["burn/wgpu"]
+
+[dependencies]
+burn = { workspace = true, features = ["wgpu"] }
+burn-wgpu = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
+burn = { workspace = true, features = ["wgpu", "ndarray"] }

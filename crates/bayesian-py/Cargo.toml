@@ -1,0 +1,35 @@
+[package]
+name = "bayesian-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python bindings for BayesianGPU - GPU-accelerated Bayesian inference"
+
+[lib]
+name = "bayesiangpu"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PyO3 for Python bindings
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+# Internal crates
+bayesian-core = { path = "../bayesian-core" }
+bayesian-sampler = { path = "../bayesian-sampler" }
+bayesian-diagnostics = { path = "../bayesian-diagnostics" }
+bayesian-rng = { path = "../bayesian-rng" }
+
+# Burn for tensor operations (CPU backend)
+burn = { workspace = true, features = ["ndarray"] }
+burn-autodiff = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = []
+
+[dev-dependencies]
+pyo3 = { version = "0.23", features = ["auto-initialize"] }

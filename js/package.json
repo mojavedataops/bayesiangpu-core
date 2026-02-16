@@ -1,0 +1,78 @@
+{
+  "name": "bayesiangpu",
+  "version": "0.1.0",
+  "description": "GPU-accelerated Bayesian inference in the browser using WebGPU and WASM",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./wasm": {
+      "import": "./pkg/bayesian_wasm.js",
+      "types": "./pkg/bayesian_wasm.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "pkg",
+    "README.md"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build ../crates/bayesian-wasm --target web --out-dir ../../js/pkg",
+    "build:wasm:cpu": "wasm-pack build ../crates/bayesian-wasm --target web --out-dir ../../js/pkg --features ndarray",
+    "build:wasm:gpu": "wasm-pack build ../crates/bayesian-wasm --target web --out-dir ../../js/pkg --features wgpu",
+    "build:ts": "tsc",
+    "build": "npm run build:wasm && npm run build:ts",
+    "build:cpu": "npm run build:wasm:cpu && npm run build:ts",
+    "build:gpu": "npm run build:wasm:gpu && npm run build:ts",
+    "clean": "rm -rf dist pkg docs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "echo 'Open http://localhost:8080/browser-test/ in your browser' && python3 -m http.server 8080",
+    "docs": "typedoc --out docs src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "bayesian",
+    "statistics",
+    "mcmc",
+    "hmc",
+    "nuts",
+    "webgpu",
+    "wasm",
+    "inference",
+    "machine-learning"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mojavedataops/bayesiangpu-core",
+    "directory": "js"
+  },
+  "homepage": "https://github.com/mojavedataops/bayesiangpu-core#readme",
+  "bugs": {
+    "url": "https://github.com/mojavedataops/bayesiangpu-core/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typedoc": "^0.25.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@observablehq/plot": "^0.6"
+  },
+  "peerDependenciesMeta": {
+    "@observablehq/plot": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false
+}

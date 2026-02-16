@@ -1,0 +1,40 @@
+# Rust
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.so
+.eggs/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Node
+node_modules/
+js/pkg/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Coverage
+.coverage
+*.coverage
+htmlcov/

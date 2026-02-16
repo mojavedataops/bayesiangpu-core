@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BayesianGPU WebGPU Test Harness</title>
+  <style>
+    :root {
+      --bg: #1a1a2e;
+      --card-bg: #16213e;
+      --text: #e4e4e4;
+      --muted: #8d8d8d;
+      --accent: #0f4c75;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --info: #3b82f6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: var(--text);
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 10px;
+    }
+
+    h2 {
+      color: var(--text);
+      font-size: 1.2em;
+      margin-top: 24px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      border: 1px solid var(--accent);
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .status-item:last-child {
+      border-bottom: none;
+    }
+
+    .status-label {
+      color: var(--muted);
+    }
+
+    .status-value {
+      font-weight: bold;
+    }
+
+    .status-value.success { color: var(--success); }
+    .status-value.warning { color: var(--warning); }
+    .status-value.error { color: var(--error); }
+    .status-value.info { color: var(--info); }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-weight: bold;
+    }
+
+    .badge.success { background: var(--success); color: white; }
+    .badge.warning { background: var(--warning); color: black; }
+    .badge.error { background: var(--error); color: white; }
+    .badge.info { background: var(--info); color: white; }
+
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-size: 1em;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      font-family: inherit;
+    }
+
+    button:hover:not(:disabled) {
+      opacity: 0.8;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .log {
+      background: #0d1117;
+      border-radius: 4px;
+      padding: 16px;
+      font-size: 0.9em;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-entry {
+      margin-bottom: 4px;
+    }
+
+    .log-entry.info { color: var(--info); }
+    .log-entry.success { color: var(--success); }
+    .log-entry.warning { color: var(--warning); }
+    .log-entry.error { color: var(--error); }
+    .log-entry.time { color: var(--muted); }
+
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+    }
+
+    .results-table th,
+    .results-table td {
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .results-table th {
+      color: var(--muted);
+      font-weight: normal;
+    }
+
+    .progress {
+      width: 100%;
+      height: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s;
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>BayesianGPU WebGPU Test Harness</h1>
+
+    <!-- Environment Detection -->
+    <div class="card">
+      <h2>Browser Environment</h2>
+      <div class="status-grid">
+        <div>
+          <div class="status-item">
+            <span class="status-label">Browser</span>
+            <span id="browser-name" class="status-value info">Detecting...</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">User Agent</span>
+            <span id="user-agent" class="status-value" style="font-size: 0.8em; max-width: 400px; overflow: hidden; text-overflow: ellipsis;">-</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Platform</span>
+            <span id="platform" class="status-value">-</span>
+          </div>
+        </div>
+        <div>
+          <div class="status-item">
+            <span class="status-label">WebGPU API</span>
+            <span id="webgpu-api" class="status-value">Checking...</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">GPU Adapter</span>
+            <span id="gpu-adapter" class="status-value">Checking...</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">GPU Device</span>
+            <span id="gpu-device" class="status-value">Checking...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- WASM Module Status -->
+    <div class="card">
+      <h2>WASM Module</h2>
+      <div class="status-item">
+        <span class="status-label">Module Status</span>
+        <span id="wasm-status" class="status-value">Not loaded</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Version</span>
+        <span id="wasm-version" class="status-value">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Active Backend</span>
+        <span id="active-backend" class="status-value">-</span>
+      </div>
+      <div style="margin-top: 16px;">
+        <div class="button-group">
+          <button id="btn-init-auto" onclick="initBackend('auto')">Initialize (Auto)</button>
+          <button id="btn-init-cpu" onclick="initBackend('cpu')">Force CPU</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inference Tests -->
+    <div class="card">
+      <h2>Inference Tests</h2>
+      <div id="test-controls">
+        <div class="button-group">
+          <button id="btn-test-simple" onclick="runTest('simple')" disabled>Simple Model (Beta-Binomial)</button>
+          <button id="btn-test-multi" onclick="runTest('multi')" disabled>Multi-parameter Model</button>
+          <button id="btn-test-perf" onclick="runTest('performance')" disabled>Performance Benchmark</button>
+          <button id="btn-test-all" onclick="runAllTests()" disabled>Run All Tests</button>
+        </div>
+      </div>
+      <div id="test-progress" class="hidden">
+        <div class="progress">
+          <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        </div>
+        <span id="progress-text" class="status-label">Running...</span>
+      </div>
+    </div>
+
+    <!-- Test Results -->
+    <div id="results-section" class="card hidden">
+      <h2>Test Results</h2>
+      <div id="results-summary"></div>
+      <table class="results-table" id="results-table">
+        <thead>
+          <tr>
+            <th>Test</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Diagnostic Log -->
+    <div class="card">
+      <h2>Diagnostic Log</h2>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    // Make functions available globally for onclick handlers
+    window.initBackend = initBackend;
+    window.runTest = runTest;
+    window.runAllTests = runAllTests;
+
+    // State
+    let wasmModule = null;
+    let backendType = null;
+
+    // Logging
+    function log(message, type = 'info') {
+      const logEl = document.getElementById('log');
+      const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${timestamp}] ${message}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Update status indicator
+    function setStatus(id, text, status = 'info') {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = text;
+        el.className = `status-value ${status}`;
+      }
+    }
+
+    // Detect browser
+    function detectBrowser() {
+      const ua = navigator.userAgent;
+      let browserName = 'Unknown';
+
+      if (ua.includes('Firefox')) {
+        browserName = 'Firefox';
+      } else if (ua.includes('Edg/')) {
+        browserName = 'Edge';
+      } else if (ua.includes('Chrome')) {
+        browserName = 'Chrome';
+      } else if (ua.includes('Safari')) {
+        browserName = 'Safari';
+      }
+
+      return browserName;
+    }
+
+    // Check WebGPU availability
+    async function checkWebGPU() {
+      // Check API presence
+      if (!navigator.gpu) {
+        setStatus('webgpu-api', 'Not Available', 'error');
+        setStatus('gpu-adapter', 'N/A', 'error');
+        setStatus('gpu-device', 'N/A', 'error');
+        log('WebGPU API not available in this browser', 'warning');
+        return false;
+      }
+
+      setStatus('webgpu-api', 'Available', 'success');
+      log('WebGPU API is available', 'success');
+
+      // Try to get adapter
+      try {
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          setStatus('gpu-adapter', 'None found', 'warning');
+          log('No GPU adapter found', 'warning');
+          return false;
+        }
+
+        const adapterInfo = await adapter.requestAdapterInfo?.() || {};
+        const adapterName = adapterInfo.device || adapterInfo.description || 'Available';
+        setStatus('gpu-adapter', adapterName, 'success');
+        log(`GPU Adapter: ${JSON.stringify(adapterInfo)}`, 'info');
+
+        // Try to get device
+        const device = await adapter.requestDevice();
+        if (!device) {
+          setStatus('gpu-device', 'Failed to create', 'error');
+          log('Failed to create GPU device', 'error');
+          return false;
+        }
+
+        setStatus('gpu-device', 'Created', 'success');
+        log('GPU device created successfully', 'success');
+
+        // Log device limits
+        log(`Max buffer size: ${device.limits.maxBufferSize}`, 'info');
+        log(`Max compute workgroup size: ${device.limits.maxComputeWorkgroupSizeX}x${device.limits.maxComputeWorkgroupSizeY}x${device.limits.maxComputeWorkgroupSizeZ}`, 'info');
+
+        return true;
+      } catch (error) {
+        setStatus('gpu-adapter', 'Error', 'error');
+        setStatus('gpu-device', 'Error', 'error');
+        log(`WebGPU error: ${error.message}`, 'error');
+        return false;
+      }
+    }
+
+    // Initialize environment info
+    async function initEnvironment() {
+      const browser = detectBrowser();
+      setStatus('browser-name', browser, 'info');
+      document.getElementById('user-agent').textContent = navigator.userAgent;
+      document.getElementById('platform').textContent = navigator.platform;
+
+      log(`Browser: ${browser}`, 'info');
+      log(`Platform: ${navigator.platform}`, 'info');
+
+      await checkWebGPU();
+    }
+
+    // Initialize backend
+    async function initBackend(mode = 'auto') {
+      log(`Initializing WASM module (mode: ${mode})...`, 'info');
+      setStatus('wasm-status', 'Loading...', 'warning');
+
+      document.getElementById('btn-init-auto').disabled = true;
+      document.getElementById('btn-init-cpu').disabled = true;
+
+      try {
+        // Dynamic import of the WASM module
+        const module = await import('../pkg/bayesian_wasm.js');
+        await module.default();
+        wasmModule = module;
+
+        setStatus('wasm-status', 'Loaded', 'success');
+        setStatus('wasm-version', wasmModule.version(), 'info');
+        log(`WASM module loaded, version: ${wasmModule.version()}`, 'success');
+
+        // Initialize backend
+        if (wasmModule.init_backend) {
+          log('Initializing compute backend (30s timeout)...', 'info');
+
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('init_backend() timed out after 30s')), 30000);
+          });
+
+          try {
+            const result = await Promise.race([
+              wasmModule.init_backend(),
+              timeoutPromise
+            ]);
+            backendType = typeof result === 'string' ? result : String(result);
+
+            if (backendType === 'webgpu') {
+              setStatus('active-backend', 'WebGPU', 'success');
+              log('WebGPU backend initialized successfully!', 'success');
+            } else {
+              setStatus('active-backend', 'CPU (NdArray)', 'warning');
+              log(`Fallback to CPU backend: ${backendType}`, 'warning');
+            }
+          } catch (initError) {
+            log(`Backend init failed: ${initError.message}`, 'error');
+            log('Burn wgpu may not fully support browser WebGPU - this is a known limitation', 'warning');
+            backendType = 'failed';
+            setStatus('active-backend', 'FAILED - see log', 'error');
+          }
+        } else {
+          // ndarray-only build
+          backendType = 'cpu';
+          setStatus('active-backend', 'CPU (ndarray-only build)', 'info');
+          log('CPU-only WASM build loaded', 'info');
+        }
+
+        // Enable test buttons
+        document.getElementById('btn-test-simple').disabled = false;
+        document.getElementById('btn-test-multi').disabled = false;
+        document.getElementById('btn-test-perf').disabled = false;
+        document.getElementById('btn-test-all').disabled = false;
+
+      } catch (error) {
+        setStatus('wasm-status', 'Error', 'error');
+        log(`Failed to load WASM module: ${error.message}`, 'error');
+        console.error(error);
+
+        document.getElementById('btn-init-auto').disabled = false;
+        document.getElementById('btn-init-cpu').disabled = false;
+      }
+    }
+
+    // Test definitions
+    const tests = {
+      simple: {
+        name: 'Simple Beta-Binomial',
+        model: {
+          priors: [
+            { name: 'theta', distribution: { type: 'Beta', params: { alpha: 1, beta: 1 } } }
+          ],
+          likelihood: {
+            distribution: { type: 'Binomial', params: { n: 100, p: 'theta' } },
+            observed: [65]
+          }
+        },
+        config: { numSamples: 500, numWarmup: 250, numChains: 2, targetAccept: 0.8, seed: 42 },
+        validate: (result) => {
+          const theta = result.samples.theta;
+          const mean = theta.reduce((a, b) => a + b, 0) / theta.length;
+          // Posterior mean should be close to (alpha + successes) / (alpha + beta + n) = (1 + 65) / (1 + 1 + 100) = 0.647
+          const expectedMean = 0.647;
+          const pass = Math.abs(mean - expectedMean) < 0.1;
+          return {
+            pass,
+            details: `Mean: ${mean.toFixed(3)} (expected ~${expectedMean}), R-hat: ${result.diagnostics.rhat.theta.toFixed(3)}`
+          };
+        }
+      },
+      multi: {
+        name: 'Multi-parameter (Gamma-Poisson)',
+        model: {
+          priors: [
+            { name: 'rate', distribution: { type: 'Gamma', params: { shape: 2, rate: 1 } } }
+          ],
+          likelihood: {
+            distribution: { type: 'Poisson', params: { rate: 'rate' } },
+            observed: [3, 4, 5, 3, 4, 5, 6, 4, 3, 5]
+          }
+        },
+        config: { numSamples: 500, numWarmup: 250, numChains: 2, targetAccept: 0.8, seed: 123 },
+        validate: (result) => {
+          const rate = result.samples.rate;
+          const mean = rate.reduce((a, b) => a + b, 0) / rate.length;
+          // Posterior mean for Gamma-Poisson is (shape + sum(obs)) / (rate + n) = (2 + 42) / (1 + 10) = 4.0
+          const expectedMean = 4.0;
+          const pass = Math.abs(mean - expectedMean) < 0.5;
+          return {
+            pass,
+            details: `Mean: ${mean.toFixed(3)} (expected ~${expectedMean}), R-hat: ${result.diagnostics.rhat.rate.toFixed(3)}`
+          };
+        }
+      },
+      performance: {
+        name: 'Performance Benchmark',
+        model: {
+          priors: [
+            { name: 'theta', distribution: { type: 'Beta', params: { alpha: 2, beta: 2 } } }
+          ],
+          likelihood: {
+            distribution: { type: 'Binomial', params: { n: 100, p: 'theta' } },
+            observed: [50]
+          }
+        },
+        config: { numSamples: 2000, numWarmup: 1000, numChains: 4, targetAccept: 0.8, seed: 456 },
+        validate: (result) => {
+          const theta = result.samples.theta;
+          const rhat = result.diagnostics.rhat.theta;
+          const ess = result.diagnostics.ess.theta;
+          const pass = rhat < 1.1 && ess > 400;
+          return {
+            pass,
+            details: `Samples: ${theta.length}, R-hat: ${rhat.toFixed(3)}, ESS: ${ess.toFixed(0)}, Divergences: ${result.diagnostics.divergences}`
+          };
+        }
+      }
+    };
+
+    // Run a single test
+    async function runTest(testId) {
+      if (!wasmModule) {
+        log('WASM module not initialized', 'error');
+        return;
+      }
+
+      const test = tests[testId];
+      if (!test) {
+        log(`Unknown test: ${testId}`, 'error');
+        return;
+      }
+
+      log(`Running test: ${test.name}...`, 'info');
+
+      const startTime = performance.now();
+
+      try {
+        const modelJson = JSON.stringify(test.model);
+        const configJson = JSON.stringify(test.config);
+
+        const resultJson = wasmModule.run_inference(modelJson, configJson);
+        const result = JSON.parse(resultJson);
+
+        const duration = performance.now() - startTime;
+
+        if (result.error) {
+          log(`Test ${test.name} failed: ${result.error}`, 'error');
+          return { testId, name: test.name, pass: false, duration, details: result.error };
+        }
+
+        const validation = test.validate(result);
+
+        if (validation.pass) {
+          log(`Test ${test.name} PASSED (${duration.toFixed(0)}ms): ${validation.details}`, 'success');
+        } else {
+          log(`Test ${test.name} FAILED (${duration.toFixed(0)}ms): ${validation.details}`, 'error');
+        }
+
+        return { testId, name: test.name, pass: validation.pass, duration, details: validation.details };
+
+      } catch (error) {
+        const duration = performance.now() - startTime;
+        log(`Test ${test.name} ERROR: ${error.message}`, 'error');
+        return { testId, name: test.name, pass: false, duration, details: error.message };
+      }
+    }
+
+    // Run all tests
+    async function runAllTests() {
+      const testIds = Object.keys(tests);
+      const results = [];
+
+      document.getElementById('results-section').classList.remove('hidden');
+      document.getElementById('test-progress').classList.remove('hidden');
+      document.getElementById('results-body').innerHTML = '';
+
+      for (let i = 0; i < testIds.length; i++) {
+        const progress = ((i + 1) / testIds.length) * 100;
+        document.getElementById('progress-bar').style.width = `${progress}%`;
+        document.getElementById('progress-text').textContent = `Running test ${i + 1}/${testIds.length}...`;
+
+        const result = await runTest(testIds[i]);
+        results.push(result);
+
+        // Add to results table
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${result.name}</td>
+          <td><span class="badge ${result.pass ? 'success' : 'error'}">${result.pass ? 'PASS' : 'FAIL'}</span></td>
+          <td>${result.duration.toFixed(0)}ms</td>
+          <td style="font-size: 0.85em">${result.details}</td>
+        `;
+        document.getElementById('results-body').appendChild(row);
+      }
+
+      document.getElementById('test-progress').classList.add('hidden');
+
+      // Summary
+      const passed = results.filter(r => r.pass).length;
+      const total = results.length;
+      const totalTime = results.reduce((a, r) => a + r.duration, 0);
+
+      document.getElementById('results-summary').innerHTML = `
+        <div class="status-item">
+          <span class="status-label">Tests Passed</span>
+          <span class="status-value ${passed === total ? 'success' : 'warning'}">${passed}/${total}</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Total Time</span>
+          <span class="status-value info">${totalTime.toFixed(0)}ms</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Backend</span>
+          <span class="status-value ${backendType === 'webgpu' ? 'success' : 'info'}">${backendType}</span>
+        </div>
+      `;
+
+      log(`All tests completed: ${passed}/${total} passed in ${totalTime.toFixed(0)}ms`, passed === total ? 'success' : 'warning');
+    }
+
+    // Initialize on load
+    initEnvironment();
+  </script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/bayesian-core",
+    "crates/bayesian-sampler",
+    "crates/bayesian-rng",
+    "crates/bayesian-diagnostics",
+    "crates/bayesian-wasm",
+    "crates/bayesian-py",
+]
+default-members = [
+    "crates/bayesian-core",
+    "crates/bayesian-sampler",
+    "crates/bayesian-rng",
+    "crates/bayesian-diagnostics",
+    "crates/bayesian-wasm",
+]
+exclude = [
+    "r-package/bayesiangpu/src/rust",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/mojavedataops/bayesiangpu-core"
+
+[workspace.dependencies]
+burn = { version = "0.20", default-features = false }
+burn-wgpu = { version = "0.20", default-features = false }
+burn-autodiff = "0.20"
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.release]
+lto = true
+opt-level = "z"
+codegen-units = 1

@@ -1,0 +1,23 @@
+[package]
+name = "bayesiangpu-r"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib"]
+name = "bayesiangpu"
+
+[dependencies]
+extendr-api = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# BayesianGPU crates - path to workspace root
+bayesian-core = { path = "../../../../crates/bayesian-core" }
+bayesian-sampler = { path = "../../../../crates/bayesian-sampler" }
+bayesian-diagnostics = { path = "../../../../crates/bayesian-diagnostics" }
+bayesian-rng = { path = "../../../../crates/bayesian-rng" }
+
+burn = { version = "0.20", default-features = false, features = ["ndarray"] }
+burn-ndarray = "0.20"

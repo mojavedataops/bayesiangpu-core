@@ -1,0 +1,109 @@
+# images/r/Dockerfile.brms-cuda
+#
+# brms + Stan + CUDA production image
+# GPU-accelerated Bayesian inference with full NVIDIA CUDA support
+#
+# Build: docker build -f Dockerfile.brms-cuda -t bayesiangpu/brms:cuda12.4 .
+# Run:   docker run --gpus all -v $(pwd):/workspace bayesiangpu/brms:cuda12.4
+
+ARG CUDA_VERSION=12.4.0
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install R and system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # R dependencies
+    software-properties-common \
+    dirmngr \
+    gnupg \
+    # Build tools
+    build-essential \
+    cmake \
+    git \
+    # OpenCL for Stan GPU support
+    opencl-headers \
+    ocl-icd-opencl-dev \
+    clinfo \
+    # R package dependencies
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libxml2-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libv8-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add R repository and install R 4.4
+RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9 && \
+    add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu jammy-cran40/' && \
+    apt-get update && \
+    apt-get install -y r-base r-base-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g ${GID} bayesian && \
+    useradd -m -u ${UID} -g bayesian -s /bin/bash bayesian
+
+# Install R packages from CRAN
+RUN R -e "install.packages(c('renv', 'posterior', 'bayesplot', 'loo', 'tidyverse'), repos='https://cloud.r-project.org/')"
+
+# Install cmdstanr from R-universe
+RUN R -e "install.packages('cmdstanr', repos = c('https://mc-stan.org/r-packages/', getOption('repos')))"
+
+# Install brms
+RUN R -e "install.packages('brms', repos='https://cloud.r-project.org/')"
+
+# Install CmdStan with CUDA OpenCL support
+ENV CMDSTAN=/opt/cmdstan
+# NVIDIA provides OpenCL ICD
+ENV OCL_ICD_VENDORS=/etc/OpenCL/vendors
+
+# Create OpenCL ICD file for NVIDIA
+RUN mkdir -p /etc/OpenCL/vendors && \
+    echo "libnvidia-opencl.so.1" > /etc/OpenCL/vendors/nvidia.icd
+
+# Install CmdStan with OpenCL enabled
+RUN R -e "cmdstanr::install_cmdstan(dir='/opt', cores=4, cpp_options=list(stan_opencl=TRUE))"
+
+# Create model cache directory
+RUN mkdir -p /workspace/cache
+ENV CMDSTAN_CACHE=/workspace/cache
+
+# Find and set cmdstan path
+RUN CMDSTAN_DIR=$(ls -d /opt/cmdstan-* | head -1) && \
+    echo "CMDSTAN=${CMDSTAN_DIR}" >> /etc/environment && \
+    R -e "cmdstanr::set_cmdstan_path('${CMDSTAN_DIR}')"
+
+ENV CMDSTAN=/opt/cmdstan-2.35.0
+
+WORKDIR /workspace
+VOLUME ["/workspace"]
+
+# Copy scripts
+COPY scripts/compile-model.R /opt/compile-model.R
+RUN chmod +x /opt/compile-model.R
+
+# Set ownership
+RUN chown -R bayesian:bayesian /workspace /opt/cmdstan* 2>/dev/null || true
+
+# NVIDIA runtime environment
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Healthcheck
+HEALTHCHECK --interval=60s --timeout=30s --start-period=10s --retries=3 \
+    CMD R --quiet -e "library(brms); library(cmdstanr); cmdstanr::cmdstan_path(); cat('OK\n')" || exit 1
+
+# Switch to non-root user
+USER bayesian
+
+# Default command
+CMD ["R"]

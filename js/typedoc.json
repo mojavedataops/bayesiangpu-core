@@ -1,0 +1,26 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "name": "BayesianGPU JavaScript SDK",
+  "readme": "README.md",
+  "includeVersion": true,
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/mojavedataops/bayesiangpu-core",
+    "npm": "https://www.npmjs.com/package/bayesiangpu"
+  },
+  "plugin": [],
+  "theme": "default",
+  "hideGenerator": false,
+  "searchInComments": true,
+  "categorizeByGroup": true,
+  "sort": ["source-order"],
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": false
+  }
+}

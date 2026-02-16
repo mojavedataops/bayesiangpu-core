@@ -1,0 +1,9 @@
+# Requirements for BayesianGPU examples
+bayesiangpu
+
+# Streamlit example
+streamlit>=1.28
+
+# Dash example
+dash>=2.14
+dash-bootstrap-components>=1.5

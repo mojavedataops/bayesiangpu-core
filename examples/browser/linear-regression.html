@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Linear Regression - BayesianGPU</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    .charts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .chart-container {
+      background: white;
+      border-radius: 8px;
+      padding: 15px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    #status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .running { background: #fff3cd; color: #856404; }
+    .complete { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th { background: #f8f9fa; }
+  </style>
+</head>
+<body>
+  <h1>Bayesian Linear Regression</h1>
+
+  <div class="container">
+    <h2>Model</h2>
+    <pre>
+y ~ Normal(intercept + slope * x, sigma)
+
+Priors:
+  intercept ~ Normal(0, 10)
+  slope     ~ Normal(0, 5)
+  sigma     ~ HalfNormal(5)
+    </pre>
+    <button id="runBtn" onclick="runInference()">Run Inference</button>
+    <div id="status"></div>
+  </div>
+
+  <div class="charts">
+    <div class="chart-container">
+      <h3>Data & Fitted Line</h3>
+      <canvas id="dataChart"></canvas>
+    </div>
+    <div class="chart-container">
+      <h3>Posterior: Slope</h3>
+      <canvas id="slopeChart"></canvas>
+    </div>
+    <div class="chart-container">
+      <h3>Trace: Intercept</h3>
+      <canvas id="interceptTrace"></canvas>
+    </div>
+    <div class="chart-container">
+      <h3>Trace: Slope</h3>
+      <canvas id="slopeTrace"></canvas>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Results</h2>
+    <div id="results">Run inference to see results...</div>
+  </div>
+
+  <script type="module">
+    // Import BayesianGPU (update path for local development)
+    // import { Model, Normal, HalfNormal, sample } from 'bayesiangpu';
+
+    // For demo purposes, we'll simulate the results
+    // In production, uncomment the import above
+
+    const x = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const y = [2.1, 4.3, 5.8, 8.2, 9.9, 12.1, 14.0, 16.2, 18.1, 20.0];
+
+    // Initialize data chart
+    const dataCtx = document.getElementById('dataChart').getContext('2d');
+    new Chart(dataCtx, {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label: 'Observed Data',
+          data: x.map((xi, i) => ({ x: xi, y: y[i] })),
+          backgroundColor: '#007bff',
+          pointRadius: 6
+        }]
+      },
+      options: {
+        scales: {
+          x: { title: { display: true, text: 'x' } },
+          y: { title: { display: true, text: 'y' } }
+        }
+      }
+    });
+
+    window.runInference = async function() {
+      const status = document.getElementById('status');
+      const btn = document.getElementById('runBtn');
+
+      status.className = 'running';
+      status.textContent = 'Running MCMC sampling...';
+      btn.disabled = true;
+
+      try {
+        // Simulated results (replace with actual BayesianGPU call)
+        await new Promise(r => setTimeout(r, 2000));
+
+        const result = {
+          intercept: { mean: 0.12, std: 0.35, q05: -0.45, q95: 0.69, rhat: 1.01, ess: 1200 },
+          slope: { mean: 1.98, std: 0.05, q05: 1.90, q95: 2.06, rhat: 1.00, ess: 1400 },
+          sigma: { mean: 0.52, std: 0.13, q05: 0.34, q95: 0.78, rhat: 1.01, ess: 1100 }
+        };
+
+        // Update results table
+        document.getElementById('results').innerHTML = `
+          <table>
+            <tr><th>Parameter</th><th>Mean</th><th>Std</th><th>5%</th><th>95%</th><th>R-hat</th><th>ESS</th></tr>
+            <tr><td>intercept</td><td>${result.intercept.mean.toFixed(2)}</td><td>${result.intercept.std.toFixed(2)}</td><td>${result.intercept.q05.toFixed(2)}</td><td>${result.intercept.q95.toFixed(2)}</td><td>${result.intercept.rhat.toFixed(2)}</td><td>${result.intercept.ess}</td></tr>
+            <tr><td>slope</td><td>${result.slope.mean.toFixed(2)}</td><td>${result.slope.std.toFixed(2)}</td><td>${result.slope.q05.toFixed(2)}</td><td>${result.slope.q95.toFixed(2)}</td><td>${result.slope.rhat.toFixed(2)}</td><td>${result.slope.ess}</td></tr>
+            <tr><td>sigma</td><td>${result.sigma.mean.toFixed(2)}</td><td>${result.sigma.std.toFixed(2)}</td><td>${result.sigma.q05.toFixed(2)}</td><td>${result.sigma.q95.toFixed(2)}</td><td>${result.sigma.rhat.toFixed(2)}</td><td>${result.sigma.ess}</td></tr>
+          </table>
+          <p><strong>Interpretation:</strong> The data suggests y increases by approximately ${result.slope.mean.toFixed(2)} units for each unit increase in x, with an intercept near ${result.intercept.mean.toFixed(2)}.</p>
+        `;
+
+        status.className = 'complete';
+        status.textContent = 'Inference complete! 4000 samples drawn from 4 chains.';
+
+      } catch (error) {
+        status.className = 'error';
+        status.textContent = 'Error: ' + error.message;
+      }
+
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "bayesiangpu-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BayesianGPU monorepo workspace - the publishable npm package is in js/",
+  "type": "module",
+  "workspaces": [
+    "js"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build crates/bayesian-wasm --target web --out-dir ../../js/pkg",
+    "build:js": "cd js && npm run build:ts",
+    "build": "npm run build:wasm && npm run build:js",
+    "test": "cd js && npm test",
+    "test:wasm": "wasm-pack test --headless --chrome crates/bayesian-wasm",
+    "dev": "cd js && npm run dev",
+    "clean": "rm -rf js/dist js/pkg"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "wasm-pack": "^0.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

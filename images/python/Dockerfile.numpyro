@@ -1,0 +1,93 @@
+# images/python/Dockerfile.numpyro
+#
+# NumPyro + JAX + CUDA production image
+# Multi-stage build for optimized size
+#
+# Build: docker build -f Dockerfile.numpyro -t bayesiangpu/numpyro:cuda12.4 .
+# Run:   docker run --gpus all -v $(pwd):/workspace bayesiangpu/numpyro:cuda12.4
+
+# Build argument for CUDA version flexibility
+ARG CUDA_VERSION=12.4
+
+# =============================================================================
+# Stage 1: Build dependencies
+# =============================================================================
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python and build dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 python3.11-venv python3.11-dev python3-pip \
+    git curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install JAX with CUDA support
+RUN pip install --upgrade pip && \
+    pip install --upgrade "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
+# Install Bayesian stack
+RUN pip install \
+    numpyro>=0.15.0 \
+    arviz>=0.19.0 \
+    xarray \
+    netcdf4 \
+    matplotlib \
+    seaborn
+
+# =============================================================================
+# Stage 2: Runtime image (smaller)
+# =============================================================================
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 python3.11-venv \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+ARG UID=1000
+ARG GID=1000
+RUN groupadd -g ${GID} bayesian && \
+    useradd -m -u ${UID} -g bayesian -s /bin/bash bayesian
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set JAX to use GPU by default
+ENV JAX_PLATFORM_NAME=gpu
+ENV XLA_PYTHON_CLIENT_PREALLOCATE=false
+ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.8
+
+# Working directory for models
+WORKDIR /workspace
+VOLUME ["/workspace"]
+
+# Copy scripts
+COPY scripts/healthcheck.py /opt/healthcheck.py
+COPY scripts/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
+
+# Set ownership of workspace to non-root user
+RUN chown -R bayesian:bayesian /workspace
+
+# Healthcheck - verify GPU is accessible and NumPyro works
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python /opt/healthcheck.py
+
+# Switch to non-root user
+USER bayesian
+
+# Use entrypoint for initialization
+ENTRYPOINT ["/opt/entrypoint.sh"]
+
+# Default command: Python REPL
+CMD ["python"]

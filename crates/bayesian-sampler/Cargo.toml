@@ -1,0 +1,28 @@
+[package]
+name = "bayesian-sampler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HMC and NUTS samplers for BayesianGPU"
+
+[features]
+default = ["wgpu"]
+wgpu = ["burn/wgpu", "burn/autodiff", "bayesian-core/wgpu", "bayesian-rng/default"]
+# Feature for WASM builds - uses wgpu-no-std which is web-compatible
+wasm = ["burn/wgpu", "burn/autodiff", "bayesian-core/wasm", "bayesian-rng/wasm"]
+
+[dependencies]
+burn = { workspace = true, features = ["wgpu", "autodiff"] }
+burn-autodiff = { workspace = true }
+bayesian-core = { path = "../bayesian-core" }
+bayesian-rng = { path = "../bayesian-rng" }
+serde = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"
+burn = { workspace = true, features = ["wgpu", "autodiff", "ndarray"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "sampler_bench"
+harness = false
