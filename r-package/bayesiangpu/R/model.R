@@ -21,6 +21,7 @@ Model <- R6::R6Class(
     #' @description Create a new empty model
     initialize = function() {
       private$.priors <- list()
+      private$.sizes <- list()
       private$.likelihood <- NULL
       private$.observed <- NULL
     },
@@ -28,19 +29,23 @@ Model <- R6::R6Class(
     #' @description Add a parameter with a prior distribution
     #' @param name Parameter name (used to reference in likelihood)
     #' @param distribution Prior distribution
+    #' @param size Number of elements for vector parameters (defaults to 1)
     #' @return self for method chaining
-    param = function(name, distribution) {
+    param = function(name, distribution, size = 1L) {
       private$.priors[[name]] <- distribution
+      private$.sizes[[name]] <- as.integer(max(size, 1L))
       invisible(self)
     },
 
     #' @description Set the likelihood (observed data) for the model
     #' @param distribution Likelihood distribution
     #' @param data Observed data points
+    #' @param known Named list of per-observation known data (e.g., known = list(sigma = c(15, 10, 16)))
     #' @return self for method chaining
-    observe = function(distribution, data) {
+    observe = function(distribution, data, known = NULL) {
       private$.likelihood <- distribution
       private$.observed <- as.numeric(data)
+      private$.known <- known
       invisible(self)
     },
 
@@ -62,19 +67,28 @@ Model <- R6::R6Class(
     #' @description Convert model to JSON string (for internal use)
     to_json = function() {
       priors <- lapply(names(private$.priors), function(name) {
-        list(
+        size <- private$.sizes[[name]]
+        prior <- list(
           name = name,
           distribution = jsonlite::fromJSON(private$.priors[[name]])
         )
+        if (!is.null(size) && size > 1L) {
+          prior$size <- size
+        }
+        prior
       })
 
       spec <- list(priors = priors)
 
       if (!is.null(private$.likelihood)) {
-        spec$likelihood <- list(
+        lik <- list(
           distribution = jsonlite::fromJSON(private$.likelihood),
           observed = private$.observed
         )
+        if (!is.null(private$.known)) {
+          lik$known <- private$.known
+        }
+        spec$likelihood <- lik
       }
 
       jsonlite::toJSON(spec, auto_unbox = TRUE)
@@ -103,18 +117,20 @@ Model <- R6::R6Class(
   ),
   private = list(
     .priors = NULL,
+    .sizes = NULL,
     .likelihood = NULL,
-    .observed = NULL
+    .observed = NULL,
+    .known = NULL
   )
 )
 
 # Enable pipe-friendly functions
 #' @export
-param <- function(model, name, distribution) {
-  model$param(name, distribution)
+param <- function(model, name, distribution, size = 1L) {
+  model$param(name, distribution, size = size)
 }
 
 #' @export
-observe <- function(model, distribution, data) {
-  model$observe(distribution, data)
+observe <- function(model, distribution, data, known = NULL) {
+  model$observe(distribution, data, known = known)
 }

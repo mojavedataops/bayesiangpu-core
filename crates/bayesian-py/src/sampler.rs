@@ -10,7 +10,7 @@ use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::{Autodiff, NdArray};
 use burn::prelude::*;
 
-use bayesian_core::{Beta, Distribution, Exponential, Gamma, HalfNormal, Normal, Support, Uniform};
+use bayesian_core::{Beta, Distribution, Exponential, Gamma, HalfCauchy, HalfNormal, Normal, Support, Uniform};
 use bayesian_diagnostics::{ess, rhat};
 use bayesian_rng::GpuRng;
 use bayesian_sampler::{
@@ -35,13 +35,27 @@ fn sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
 #[derive(Clone)]
 struct DynamicModel {
     spec: ModelSpec,
+    /// Size of each prior (1 for scalar, N for vector)
+    prior_sizes: Vec<usize>,
+    /// Offset of each prior in the flat parameter vector
+    prior_offsets: Vec<usize>,
     device: NdArrayDevice,
 }
 
 impl DynamicModel {
     fn new(spec: ModelSpec) -> Self {
+        let prior_sizes: Vec<usize> = spec.priors.iter().map(|p| p.size.max(1)).collect();
+        let mut prior_offsets = Vec::with_capacity(prior_sizes.len());
+        let mut offset = 0usize;
+        for &sz in &prior_sizes {
+            prior_offsets.push(offset);
+            offset += sz;
+        }
+
         DynamicModel {
             spec,
+            prior_sizes,
+            prior_offsets,
             device: NdArrayDevice::default(),
         }
     }
@@ -60,16 +74,60 @@ impl DynamicModel {
         match value {
             ParamValue::Number(n) => self.scalar_tensor(*n),
             ParamValue::Reference(name) => {
-                // Find the parameter index
+                // Find the parameter by prior name and use offset
                 let idx = self
                     .spec
                     .priors
                     .iter()
                     .position(|p| &p.name == name)
                     .expect("Parameter reference not found");
+                let offset = self.prior_offsets[idx];
 
                 #[allow(clippy::single_range_in_vec_init)]
-                params.clone().slice([idx..idx + 1])
+                params.clone().slice([offset..offset + 1])
+            }
+        }
+    }
+
+    /// Check if a distribution type has positive support (parameters stored in log space)
+    fn is_positive_support_dist(dist_type: &str) -> bool {
+        matches!(
+            dist_type,
+            "HalfCauchy" | "HalfNormal" | "Gamma" | "Exponential" | "LogNormal"
+        )
+    }
+
+    /// Resolve a prior distribution parameter to a tensor value.
+    /// If it's a number, return a scalar tensor.
+    /// If it's a string reference, look up the named parameter in the full params tensor.
+    /// For positive-support referenced parameters, apply exp() to get constrained value.
+    fn resolve_prior_param(
+        &self,
+        value: &ParamValue,
+        all_params: &Tensor<PyBackend, 1>,
+    ) -> Tensor<PyBackend, 1> {
+        match value {
+            ParamValue::Number(n) => self.scalar_tensor(*n),
+            ParamValue::Reference(name) => {
+                let idx = self
+                    .spec
+                    .priors
+                    .iter()
+                    .position(|p| &p.name == name)
+                    .expect("Parameter reference not found in prior");
+                let offset = self.prior_offsets[idx];
+
+                #[allow(clippy::single_range_in_vec_init)]
+                let raw = all_params.clone().slice([offset..offset + 1]);
+
+                // If the referenced parameter has a positive-support prior, it's stored in
+                // log space (unconstrained). Apply exp() to get constrained value.
+                let ref_dist_type = &self.spec.priors[idx].distribution.dist_type;
+                if Self::is_positive_support_dist(ref_dist_type) {
+                    raw.exp()
+                } else {
+                    raw
+                }
             }
         }
     }
@@ -79,13 +137,15 @@ impl DynamicModel {
         &self,
         dist: &PyDistribution,
         value: &Tensor<PyBackend, 1>,
+        all_params: &Tensor<PyBackend, 1>,
     ) -> Tensor<PyBackend, 1> {
         match dist.dist_type.as_str() {
             "Normal" => {
-                let loc = self.get_f64_param(&dist.params, "loc");
-                let scale = self.get_f64_param(&dist.params, "scale");
-                let loc_tensor = self.scalar_tensor(loc);
-                let scale_tensor = self.scalar_tensor(scale);
+                // loc and scale can be parameter references
+                let loc_pv = dist.params.get("loc").cloned().unwrap_or(ParamValue::Number(0.0));
+                let scale_pv = dist.params.get("scale").cloned().unwrap_or(ParamValue::Number(1.0));
+                let loc_tensor = self.resolve_prior_param(&loc_pv, all_params);
+                let scale_tensor = self.resolve_prior_param(&scale_pv, all_params);
                 let normal = Normal::<PyBackend>::new(loc_tensor, scale_tensor);
                 normal.log_prob(value)
             }
@@ -149,9 +209,68 @@ impl DynamicModel {
                 let logp = exp_dist.log_prob(&transformed);
                 logp + value.clone()
             }
+            "HalfCauchy" => {
+                let scale = self.get_f64_param(&dist.params, "scale");
+                let scale_tensor = self.scalar_tensor(scale);
+                let half_cauchy = HalfCauchy::<PyBackend>::new(scale_tensor);
+                // Apply exp transform for positive constraint
+                let transformed = value.clone().exp();
+                let logp = half_cauchy.log_prob(&transformed);
+                // Add Jacobian: log|d/dx exp(x)| = x
+                logp + value.clone()
+            }
             _ => {
                 // Default: just return 0 (improper uniform)
                 Tensor::<PyBackend, 1>::zeros([1], &self.device)
+            }
+        }
+    }
+
+    /// Resolve a likelihood distribution parameter for a specific observation index.
+    ///
+    /// Resolution order:
+    /// 1. Number -> return that constant as a tensor
+    /// 2. String matching a `known` data key -> return known[key][obs_idx] as tensor
+    /// 3. String matching a vector parameter with matching size -> return params[offset + obs_idx]
+    ///    (with exp() transform if positive-support prior)
+    /// 4. String matching a scalar parameter -> return params[offset]
+    ///    (with exp() transform if positive-support prior)
+    /// 5. Fallback -> return 0.0
+    fn resolve_for_observation(
+        &self,
+        value: &ParamValue,
+        obs_idx: usize,
+        params: &Tensor<PyBackend, 1>,
+        known: &HashMap<String, Vec<f64>>,
+    ) -> Tensor<PyBackend, 1> {
+        match value {
+            ParamValue::Number(n) => self.scalar_tensor(*n),
+            ParamValue::Reference(name) => {
+                // Check known data first
+                if let Some(known_vals) = known.get(name.as_str()) {
+                    return self.scalar_tensor(known_vals.get(obs_idx).copied().unwrap_or(0.0));
+                }
+                // Check model parameters
+                if let Some(idx) = self.spec.priors.iter().position(|p| &p.name == name) {
+                    let offset = self.prior_offsets[idx];
+                    let size = self.prior_sizes[idx];
+                    let param_offset = if size > 1 && obs_idx < size {
+                        offset + obs_idx
+                    } else {
+                        offset
+                    };
+                    #[allow(clippy::single_range_in_vec_init)]
+                    let raw = params.clone().slice([param_offset..param_offset + 1]);
+                    // Apply constraint transform if needed
+                    let ref_dist_type = &self.spec.priors[idx].distribution.dist_type;
+                    if Self::is_positive_support_dist(ref_dist_type) {
+                        raw.exp()
+                    } else {
+                        raw
+                    }
+                } else {
+                    self.scalar_tensor(0.0)
+                }
             }
         }
     }
@@ -164,6 +283,7 @@ impl DynamicModel {
     ) -> Tensor<PyBackend, 1> {
         let dist = &likelihood.distribution;
         let observed = &likelihood.observed;
+        let known = &likelihood.known;
 
         match dist.dist_type.as_str() {
             "Bernoulli" => {
@@ -204,24 +324,19 @@ impl DynamicModel {
                 total_logp
             }
             "Normal" => {
-                let loc =
-                    self.get_param_value(dist.params.get("loc").expect("Normal needs loc"), params);
-                let scale = self.get_param_value(
-                    dist.params.get("scale").expect("Normal needs scale"),
-                    params,
-                );
-                // Transform scale to positive
-                let scale_constrained = scale.exp();
+                let loc_pv = dist.params.get("loc").expect("Normal needs loc");
+                let scale_pv = dist.params.get("scale").expect("Normal needs scale");
 
-                // Normal log likelihood
+                // Per-observation resolution for loc and scale
                 let mut total_logp = Tensor::<PyBackend, 1>::zeros([1], &self.device);
                 let half = self.scalar_tensor(0.5);
-                for &y in observed {
+                for (j, &y) in observed.iter().enumerate() {
+                    let loc_j = self.resolve_for_observation(loc_pv, j, params, known);
+                    let scale_j = self.resolve_for_observation(scale_pv, j, params, known);
                     let y_tensor = self.scalar_tensor(y);
-                    let diff = y_tensor - loc.clone();
-                    let z = diff / scale_constrained.clone();
-                    let logp = -scale_constrained.clone().log()
-                        - half.clone() * z.clone().powf_scalar(2.0);
+                    let diff = y_tensor - loc_j;
+                    let z = diff / scale_j.clone();
+                    let logp = -scale_j.log() - half.clone() * z.powf_scalar(2.0);
                     total_logp = total_logp + logp;
                 }
                 total_logp
@@ -258,7 +373,7 @@ impl DynamicModel {
     fn get_support(&self, dist: &PyDistribution) -> Support {
         match dist.dist_type.as_str() {
             "Normal" | "StudentT" | "Cauchy" => Support::Real,
-            "HalfNormal" | "Gamma" | "Exponential" | "LogNormal" => Support::Positive,
+            "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal" => Support::Positive,
             "Beta" | "Uniform" => Support::UnitInterval,
             _ => Support::Real,
         }
@@ -267,18 +382,22 @@ impl DynamicModel {
 
 impl BayesianModel<PyBackend> for DynamicModel {
     fn dim(&self) -> usize {
-        self.spec.priors.len()
+        self.prior_sizes.iter().sum()
     }
 
     fn log_prob(&self, params: &Tensor<PyBackend, 1>) -> Tensor<PyBackend, 1> {
         let mut total_logp = Tensor::<PyBackend, 1>::zeros([1], &self.device);
 
-        // Add prior log probabilities
+        // Add prior log probabilities (offset-based for vector params)
         for (i, prior) in self.spec.priors.iter().enumerate() {
-            #[allow(clippy::single_range_in_vec_init)]
-            let param_value = params.clone().slice([i..i + 1]);
-            let logp = self.compute_prior_logp(&prior.distribution, &param_value);
-            total_logp = total_logp + logp;
+            let offset = self.prior_offsets[i];
+            let size = self.prior_sizes[i];
+            for j in 0..size {
+                #[allow(clippy::single_range_in_vec_init)]
+                let param_value = params.clone().slice([offset + j..offset + j + 1]);
+                let logp = self.compute_prior_logp(&prior.distribution, &param_value, params);
+                total_logp = total_logp + logp;
+            }
         }
 
         // Add likelihood if present
@@ -291,7 +410,18 @@ impl BayesianModel<PyBackend> for DynamicModel {
     }
 
     fn param_names(&self) -> Vec<String> {
-        self.spec.priors.iter().map(|p| p.name.clone()).collect()
+        let mut names = Vec::new();
+        for (i, prior) in self.spec.priors.iter().enumerate() {
+            let size = self.prior_sizes[i];
+            if size == 1 {
+                names.push(prior.name.clone());
+            } else {
+                for j in 0..size {
+                    names.push(format!("{}[{}]", prior.name, j));
+                }
+            }
+        }
+        names
     }
 }
 

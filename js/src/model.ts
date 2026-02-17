@@ -35,6 +35,8 @@ export interface Prior {
   name: string;
   /** Prior distribution */
   distribution: Distribution;
+  /** Number of elements for vector parameters (defaults to 1 for scalar) */
+  size?: number;
 }
 
 /**
@@ -45,6 +47,8 @@ export interface Likelihood {
   distribution: Distribution;
   /** Observed data */
   observed: number[];
+  /** Per-observation known data (e.g., known standard deviations) */
+  known?: Record<string, number[]>;
 }
 
 /**
@@ -80,15 +84,21 @@ export class Model {
    *
    * @param name - Parameter name (used to reference in likelihood)
    * @param distribution - Prior distribution
+   * @param options - Optional settings (e.g., size for vector parameters)
    * @returns this for method chaining
    *
    * @example
    * ```typescript
    * model.param('theta', Beta(1, 1))
+   * model.param('theta', Normal('mu', 'tau'), { size: 8 })
    * ```
    */
-  param(name: string, distribution: Distribution): this {
-    this.spec.priors.push({ name, distribution });
+  param(name: string, distribution: Distribution, options?: { size?: number }): this {
+    const prior: Prior = { name, distribution };
+    if (options?.size && options.size > 1) {
+      prior.size = options.size;
+    }
+    this.spec.priors.push(prior);
     return this;
   }
 
@@ -104,10 +114,11 @@ export class Model {
    * model.observe(Binomial(100, 'theta'), [65])
    * ```
    */
-  observe(distribution: Distribution, data: number[]): this {
+  observe(distribution: Distribution, data: number[], options?: { known?: Record<string, number[]> }): this {
     this.spec.likelihood = {
       distribution,
       observed: data,
+      ...(options?.known && { known: options.known }),
     };
     return this;
   }
@@ -335,6 +346,25 @@ export const StudentT = (
 export const Cauchy = (loc: number = 0, scale: number = 1): Distribution => ({
   type: 'Cauchy',
   params: { loc, scale },
+});
+
+/**
+ * Half-Cauchy distribution (positive values only)
+ *
+ * Heavy-tailed prior for scale parameters, widely recommended
+ * for hierarchical models.
+ *
+ * @param scale - Scale parameter
+ * @returns Distribution specification
+ *
+ * @example
+ * ```typescript
+ * HalfCauchy(5)  // Half-Cauchy with scale 5
+ * ```
+ */
+export const HalfCauchy = (scale: number = 1): Distribution => ({
+  type: 'HalfCauchy',
+  params: { scale },
 });
 
 /**

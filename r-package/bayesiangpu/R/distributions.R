@@ -33,6 +33,24 @@ HalfNormal <- function(scale) {
   )
 }
 
+#' Half-Cauchy Distribution
+#'
+#' Create a Half-Cauchy distribution (positive values only).
+#' Heavy-tailed prior for scale parameters, widely recommended
+#' for hierarchical models.
+#'
+#' @param scale Scale parameter (default: 1)
+#' @return A distribution specification
+#' @export
+#' @examples
+#' HalfCauchy(5)  # Half-Cauchy with scale 5
+HalfCauchy <- function(scale = 1) {
+  structure(
+    half_cauchy_dist(scale),
+    class = c("bg_distribution", "character")
+  )
+}
+
 #' Beta Distribution
 #'
 #' Create a Beta distribution. Defined on (0, 1), useful for probability parameters.

@@ -37,6 +37,7 @@ export type { Distribution, Prior, Likelihood, ModelSpec } from './model';
 export {
   Normal,
   HalfNormal,
+  HalfCauchy,
   Beta,
   Gamma,
   Uniform,

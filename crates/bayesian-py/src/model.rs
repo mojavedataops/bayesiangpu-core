@@ -2,6 +2,7 @@
 
 use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::distributions::PyDistribution;
 
@@ -10,6 +11,13 @@ use crate::distributions::PyDistribution;
 pub struct Prior {
     pub name: String,
     pub distribution: PyDistribution,
+    /// Number of elements for vector parameters (defaults to 1 for scalar)
+    #[serde(default = "default_prior_size")]
+    pub size: usize,
+}
+
+fn default_prior_size() -> usize {
+    1
 }
 
 /// Likelihood specification
@@ -17,6 +25,9 @@ pub struct Prior {
 pub struct Likelihood {
     pub distribution: PyDistribution,
     pub observed: Vec<f64>,
+    /// Per-observation known data (e.g., known standard deviations in Eight Schools)
+    #[serde(default)]
+    pub known: HashMap<String, Vec<f64>>,
 }
 
 /// Complete model specification
@@ -57,14 +68,21 @@ impl PyModel {
     /// Args:
     ///     name: Parameter name (used to reference in likelihood)
     ///     distribution: Prior distribution
+    ///     size: Number of elements for vector parameters (defaults to 1)
     ///
     /// Returns:
     ///     self for method chaining
     ///
     /// Example:
     ///     >>> model.param("theta", Beta(1, 1))
-    pub fn param(&mut self, name: String, distribution: PyDistribution) -> PyResult<Self> {
-        self.spec.priors.push(Prior { name, distribution });
+    ///     >>> model.param("theta", Normal("mu", "tau"), size=8)
+    #[pyo3(signature = (name, distribution, size=1))]
+    pub fn param(&mut self, name: String, distribution: PyDistribution, size: usize) -> PyResult<Self> {
+        self.spec.priors.push(Prior {
+            name,
+            distribution,
+            size: size.max(1),
+        });
         Ok(self.clone())
     }
 
@@ -79,24 +97,42 @@ impl PyModel {
     ///
     /// Example:
     ///     >>> model.observe(Binomial(100, "theta"), [65])
-    pub fn observe(&mut self, distribution: PyDistribution, data: Vec<f64>) -> PyResult<Self> {
+    #[pyo3(signature = (distribution, data, known=None))]
+    pub fn observe(
+        &mut self,
+        distribution: PyDistribution,
+        data: Vec<f64>,
+        known: Option<HashMap<String, Vec<f64>>>,
+    ) -> PyResult<Self> {
         self.spec.likelihood = Some(Likelihood {
             distribution,
             observed: data,
+            known: known.unwrap_or_default(),
         });
         Ok(self.clone())
     }
 
-    /// Get the list of parameter names
+    /// Get the list of parameter names (expanded for vector params)
     #[getter]
     pub fn param_names(&self) -> Vec<String> {
-        self.spec.priors.iter().map(|p| p.name.clone()).collect()
+        let mut names = Vec::new();
+        for p in &self.spec.priors {
+            let size = p.size.max(1);
+            if size == 1 {
+                names.push(p.name.clone());
+            } else {
+                for i in 0..size {
+                    names.push(format!("{}[{}]", p.name, i));
+                }
+            }
+        }
+        names
     }
 
-    /// Get the number of parameters
+    /// Get the number of parameters (total dimension including vector params)
     #[getter]
     pub fn num_params(&self) -> usize {
-        self.spec.priors.len()
+        self.spec.priors.iter().map(|p| p.size.max(1)).sum()
     }
 
     /// Check if the model has a likelihood

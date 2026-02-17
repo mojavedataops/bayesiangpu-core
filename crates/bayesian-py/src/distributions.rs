@@ -260,6 +260,30 @@ pub fn student_t(
     })
 }
 
+/// Half-Cauchy distribution (positive values only)
+///
+/// Heavy-tailed prior for scale parameters, widely recommended
+/// for hierarchical models.
+///
+/// Args:
+///     scale: Scale parameter (default: 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> HalfCauchy(5)  # Half-Cauchy with scale 5
+#[pyfunction]
+#[pyo3(signature = (scale=1.0))]
+pub fn half_cauchy(scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "HalfCauchy".to_string(),
+        params,
+    }
+}
+
 /// Cauchy distribution
 ///
 /// Heavy-tailed distribution useful for weakly informative priors.

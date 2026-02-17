@@ -50,6 +50,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(uniform, m)?)?;
     m.add_function(wrap_pyfunction!(exponential, m)?)?;
     m.add_function(wrap_pyfunction!(student_t, m)?)?;
+    m.add_function(wrap_pyfunction!(half_cauchy, m)?)?;
     m.add_function(wrap_pyfunction!(cauchy, m)?)?;
     m.add_function(wrap_pyfunction!(log_normal, m)?)?;
     m.add_function(wrap_pyfunction!(multivariate_normal, m)?)?;

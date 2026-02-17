@@ -22,7 +22,11 @@ serde = { workspace = true }
 approx = "0.5"
 burn = { workspace = true, features = ["wgpu", "autodiff", "ndarray"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+bayesian-diagnostics = { path = "../bayesian-diagnostics" }
 
 [[bench]]
 name = "sampler_bench"
 harness = false
+
+[[example]]
+name = "eight_schools"

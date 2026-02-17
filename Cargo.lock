@@ -209,6 +209,7 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "bayesian-core",
+ "bayesian-diagnostics",
  "bayesian-rng",
  "burn",
  "burn-autodiff",
