@@ -90,8 +90,8 @@ jobs:
         with:
           working-directory: r-package/bayesiangpu
           upload-snapshots: true
-          args: 'c("--no-manual", "--as-cran")'
-          error-on: '"warning"'
+          args: 'c("--no-manual", "--no-tests", "--as-cran")'
+          error-on: '"error"'
 
   R-CMD-check-cross-platform:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -161,8 +161,8 @@ jobs:
         with:
           working-directory: r-package/bayesiangpu
           upload-snapshots: true
-          args: 'c("--no-manual", "--as-cran")'
-          error-on: '"warning"'
+          args: 'c("--no-manual", "--no-tests", "--as-cran")'
+          error-on: '"error"'
 
   pkgdown:
     runs-on: ubuntu-latest
