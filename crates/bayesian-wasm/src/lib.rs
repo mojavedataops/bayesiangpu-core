@@ -319,12 +319,20 @@ impl DynamicModel {
         match spec.dist_type.as_str() {
             "Normal" => {
                 // For Normal, loc and scale can be parameter references
-                if Self::is_param_ref(&spec.params, "loc") || Self::is_param_ref(&spec.params, "scale") {
+                if Self::is_param_ref(&spec.params, "loc")
+                    || Self::is_param_ref(&spec.params, "scale")
+                {
                     let loc = self.resolve_prior_param_tensor(&spec.params, "loc", 0.0, all_params);
-                    let scale = self.resolve_prior_param_tensor(&spec.params, "scale", 1.0, all_params);
+                    let scale =
+                        self.resolve_prior_param_tensor(&spec.params, "scale", 1.0, all_params);
                     // log N(x | loc, scale) = -0.5 * log(2*pi*scale^2) - 0.5 * ((x-loc)/scale)^2
                     let z = (value.clone() - loc) / scale.clone();
-                    let log_norm = scale.clone().powf_scalar(2.0).mul_scalar(2.0 * std::f32::consts::PI).log().mul_scalar(-0.5);
+                    let log_norm = scale
+                        .clone()
+                        .powf_scalar(2.0)
+                        .mul_scalar(2.0 * std::f32::consts::PI)
+                        .log()
+                        .mul_scalar(-0.5);
                     z.powf_scalar(2.0).mul_scalar(-0.5) + log_norm
                 } else {
                     let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
@@ -491,17 +499,27 @@ impl DynamicModel {
                 // Per-observation resolution: loc and scale can be vector params, known data, or scalars
                 let mut log_lik = Tensor::<WasmBackend, 1>::zeros([1], &self.device);
                 for (j, &y) in observed.iter().enumerate() {
-                    let loc_j = self.resolve_for_observation(&spec.params, "loc", j, params, &self.likelihood.known);
-                    let scale_j = self.resolve_for_observation(&spec.params, "scale", j, params, &self.likelihood.known);
+                    let loc_j = self.resolve_for_observation(
+                        &spec.params,
+                        "loc",
+                        j,
+                        params,
+                        &self.likelihood.known,
+                    );
+                    let scale_j = self.resolve_for_observation(
+                        &spec.params,
+                        "scale",
+                        j,
+                        params,
+                        &self.likelihood.known,
+                    );
                     // log N(y | loc, scale) = -0.5*log(2*pi*scale^2) - 0.5*((y-loc)/scale)^2
                     let log_norm = -0.5 * (2.0 * std::f32::consts::PI * scale_j * scale_j).ln();
                     let z = (y as f32 - loc_j) / scale_j;
-                    log_lik = log_lik.add(
-                        Tensor::<WasmBackend, 1>::from_floats(
-                            [-0.5 * z * z + log_norm],
-                            &self.device,
-                        ),
-                    );
+                    log_lik = log_lik.add(Tensor::<WasmBackend, 1>::from_floats(
+                        [-0.5 * z * z + log_norm],
+                        &self.device,
+                    ));
                 }
                 log_lik
             }
@@ -617,8 +635,9 @@ impl DynamicModel {
 
         // Check if the likelihood distribution has a GPU kernel
         match self.likelihood.distribution.dist_type.as_str() {
-            "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta" | "InverseGamma"
-            | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial" | "Poisson" => true,
+            "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta"
+            | "InverseGamma" | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial"
+            | "Poisson" => true,
             _ => false,
         }
     }
@@ -693,7 +712,12 @@ impl DynamicModel {
     }
 
     /// Compute log_prior and its gradient for a single parameter
-    fn compute_prior_logp_and_grad(&self, value: f32, spec: &DistributionSpec, all_params: &[f32]) -> (f64, f64) {
+    fn compute_prior_logp_and_grad(
+        &self,
+        value: f32,
+        spec: &DistributionSpec,
+        all_params: &[f32],
+    ) -> (f64, f64) {
         match spec.dist_type.as_str() {
             "Normal" => {
                 let loc = self.resolve_prior_param_f32(&spec.params, "loc", 0.0, all_params);
@@ -3258,11 +3282,7 @@ pub fn run_inference(model_json: &str, config_json: &str) -> String {
         .iter()
         .map(|p| p.distribution.clone())
         .collect();
-    let prior_sizes: Vec<usize> = model_spec
-        .priors
-        .iter()
-        .map(|p| p.size.max(1))
-        .collect();
+    let prior_sizes: Vec<usize> = model_spec.priors.iter().map(|p| p.size.max(1)).collect();
 
     let model = DynamicModel::new(model_spec, device);
     let param_names = model.param_names();
@@ -3281,7 +3301,13 @@ pub fn run_inference(model_json: &str, config_json: &str) -> String {
     let sampler = MultiChainSampler::new(model, multi_config);
 
     // Generate initial values based on prior types
-    let inits = generate_inits(&prior_specs, &prior_sizes, config.num_chains, config.seed, &device);
+    let inits = generate_inits(
+        &prior_specs,
+        &prior_sizes,
+        config.num_chains,
+        config.seed,
+        &device,
+    );
 
     // Run sampling
     let result = sampler.sample(inits);

@@ -77,7 +77,12 @@ impl PyModel {
     ///     >>> model.param("theta", Beta(1, 1))
     ///     >>> model.param("theta", Normal("mu", "tau"), size=8)
     #[pyo3(signature = (name, distribution, size=1))]
-    pub fn param(&mut self, name: String, distribution: PyDistribution, size: usize) -> PyResult<Self> {
+    pub fn param(
+        &mut self,
+        name: String,
+        distribution: PyDistribution,
+        size: usize,
+    ) -> PyResult<Self> {
         self.spec.priors.push(Prior {
             name,
             distribution,

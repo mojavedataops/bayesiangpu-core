@@ -10,7 +10,9 @@ use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::{Autodiff, NdArray};
 use burn::prelude::*;
 
-use bayesian_core::{Beta, Distribution, Exponential, Gamma, HalfCauchy, HalfNormal, Normal, Support, Uniform};
+use bayesian_core::{
+    Beta, Distribution, Exponential, Gamma, HalfCauchy, HalfNormal, Normal, Support, Uniform,
+};
 use bayesian_diagnostics::{ess, rhat};
 use bayesian_rng::GpuRng;
 use bayesian_sampler::{
@@ -142,8 +144,16 @@ impl DynamicModel {
         match dist.dist_type.as_str() {
             "Normal" => {
                 // loc and scale can be parameter references
-                let loc_pv = dist.params.get("loc").cloned().unwrap_or(ParamValue::Number(0.0));
-                let scale_pv = dist.params.get("scale").cloned().unwrap_or(ParamValue::Number(1.0));
+                let loc_pv = dist
+                    .params
+                    .get("loc")
+                    .cloned()
+                    .unwrap_or(ParamValue::Number(0.0));
+                let scale_pv = dist
+                    .params
+                    .get("scale")
+                    .cloned()
+                    .unwrap_or(ParamValue::Number(1.0));
                 let loc_tensor = self.resolve_prior_param(&loc_pv, all_params);
                 let scale_tensor = self.resolve_prior_param(&scale_pv, all_params);
                 let normal = Normal::<PyBackend>::new(loc_tensor, scale_tensor);
@@ -373,7 +383,9 @@ impl DynamicModel {
     fn get_support(&self, dist: &PyDistribution) -> Support {
         match dist.dist_type.as_str() {
             "Normal" | "StudentT" | "Cauchy" => Support::Real,
-            "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal" => Support::Positive,
+            "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal" => {
+                Support::Positive
+            }
             "Beta" | "Uniform" => Support::UnitInterval,
             _ => Support::Real,
         }

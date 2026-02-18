@@ -15,9 +15,7 @@ use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
 
 use bayesian_diagnostics::{ess, rhat, summarize_named};
-use bayesian_sampler::{
-    model::BayesianModel, MultiChainConfig, MultiChainSampler, NutsConfig,
-};
+use bayesian_sampler::{model::BayesianModel, MultiChainConfig, MultiChainSampler, NutsConfig};
 
 type MyBackend = Autodiff<NdArray<f32>>;
 
@@ -287,8 +285,6 @@ fn main() {
         "  Centered divergences:     {}",
         c_result.total_divergences()
     );
-    println!(
-        "\n  The non-centered parameterization should have fewer divergences"
-    );
+    println!("\n  The non-centered parameterization should have fewer divergences");
     println!("  and better mixing (higher ESS, R-hat closer to 1.0).");
 }

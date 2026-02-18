@@ -15,9 +15,7 @@ use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
 
 use bayesian_diagnostics::{rhat, summarize_named};
-use bayesian_sampler::{
-    model::BayesianModel, MultiChainConfig, MultiChainSampler, NutsConfig,
-};
+use bayesian_sampler::{model::BayesianModel, MultiChainConfig, MultiChainSampler, NutsConfig};
 
 type TestBackend = Autodiff<NdArray<f32>>;
 
@@ -334,10 +332,7 @@ fn test_eight_schools_comparison() {
     println!("Eight Schools Comparison: Centered vs Non-Centered");
     println!("{}", "=".repeat(70));
 
-    println!(
-        "\n{:<20} {:>12} {:>12}",
-        "", "Centered", "Non-Centered"
-    );
+    println!("\n{:<20} {:>12} {:>12}", "", "Centered", "Non-Centered");
     println!("{}", "-".repeat(44));
     println!(
         "{:<20} {:>12} {:>12}",
@@ -346,7 +341,8 @@ fn test_eight_schools_comparison() {
         nc_result.total_divergences()
     );
 
-    let param_names_nc = <NonCenteredEightSchools as BayesianModel<TestBackend>>::param_names(&nc_model);
+    let param_names_nc =
+        <NonCenteredEightSchools as BayesianModel<TestBackend>>::param_names(&nc_model);
     println!(
         "\n{:<20} {:>8} {:>8} {:>8} {:>8}",
         "Parameter", "C mean", "NC mean", "C Rhat", "NC Rhat"
