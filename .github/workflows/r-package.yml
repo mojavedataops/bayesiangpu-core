@@ -68,9 +68,23 @@ jobs:
           cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
           mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+          # Inline workspace references in vendored crate Cargo.tomls
+          for f in r-package/bayesiangpu/src/rust/crates/*/Cargo.toml; do
+            sed \
+              -e 's/^version\.workspace = true$/version = "0.1.0"/' \
+              -e 's/^edition\.workspace = true$/edition = "2021"/' \
+              -e 's/^license\.workspace = true$/license = "MIT"/' \
+              -e '/^burn-autodiff/s/workspace = true/version = "0.20"/' \
+              -e '/^burn-wgpu/s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^burn /s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^serde_json/s/workspace = true/version = "1.0"/' \
+              -e '/^serde /s/workspace = true/version = "1.0", features = ["derive"]/' \
+              "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
 
       - uses: r-lib/actions/check-r-package@v2
         with:
@@ -125,9 +139,23 @@ jobs:
           cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
           mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+          # Inline workspace references in vendored crate Cargo.tomls
+          for f in r-package/bayesiangpu/src/rust/crates/*/Cargo.toml; do
+            sed \
+              -e 's/^version\.workspace = true$/version = "0.1.0"/' \
+              -e 's/^edition\.workspace = true$/edition = "2021"/' \
+              -e 's/^license\.workspace = true$/license = "MIT"/' \
+              -e '/^burn-autodiff/s/workspace = true/version = "0.20"/' \
+              -e '/^burn-wgpu/s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^burn /s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^serde_json/s/workspace = true/version = "1.0"/' \
+              -e '/^serde /s/workspace = true/version = "1.0", features = ["derive"]/' \
+              "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+          done
 
       - uses: r-lib/actions/check-r-package@v2
         with:
