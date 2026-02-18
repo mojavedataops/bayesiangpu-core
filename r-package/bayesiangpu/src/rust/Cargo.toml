@@ -7,7 +7,7 @@ publish = false
 [workspace]
 
 [lib]
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["staticlib"]
 name = "bayesiangpu"
 
 [dependencies]
