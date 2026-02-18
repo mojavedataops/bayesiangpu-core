@@ -12,37 +12,3 @@ navbar:
       icon: fab fa-github
       href: https://github.com/mojavedataops/bayesiangpu-core
 
-reference:
-  - title: Model Building
-    desc: Functions for building Bayesian models
-    contents:
-      - Model
-      - param
-      - observe
-
-  - title: Distributions
-    desc: Prior and likelihood distributions
-    contents:
-      - Normal
-      - HalfNormal
-      - Beta
-      - Gamma
-      - Uniform
-      - Exponential
-      - Cauchy
-      - StudentT
-      - LogNormal
-      - Bernoulli
-      - Binomial
-      - Poisson
-
-  - title: Sampling
-    desc: MCMC sampling functions
-    contents:
-      - bg_sample
-      - quick_sample
-
-  - title: Results
-    desc: Working with inference results
-    contents:
-      - InferenceResult
