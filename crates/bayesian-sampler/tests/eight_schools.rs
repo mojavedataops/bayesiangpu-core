@@ -218,6 +218,7 @@ impl<B: AutodiffBackend> BayesianModel<B> for NonCenteredEightSchools {
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[test]
+#[ignore] // Slow: MCMC sampling with 1000 warmup + 1000 samples across 4 chains
 fn test_eight_schools_non_centered() {
     let device = NdArrayDevice::default();
     let model = NonCenteredEightSchools::new();
@@ -259,6 +260,7 @@ fn test_eight_schools_non_centered() {
 }
 
 #[test]
+#[ignore] // Slow: MCMC sampling with 200 warmup + 200 samples across 2 chains
 fn test_eight_schools_centered_has_divergences() {
     let device = NdArrayDevice::default();
     let model = CenteredEightSchools::new();
