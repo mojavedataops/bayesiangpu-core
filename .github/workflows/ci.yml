@@ -42,8 +42,7 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: js/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
-        working-directory: js
       - run: npm test
         working-directory: js
