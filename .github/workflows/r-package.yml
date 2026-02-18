@@ -61,6 +61,17 @@ jobs:
           extra-packages: any::rcmdcheck
           needs: check
 
+      - name: Vendor workspace crates for R CMD check
+        run: |
+          mkdir -p r-package/bayesiangpu/src/rust/crates
+          cp -r crates/bayesian-core r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
+          sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
+          mv "$CARGO_TOML.tmp" "$CARGO_TOML"
+
       - uses: r-lib/actions/check-r-package@v2
         with:
           working-directory: r-package/bayesiangpu
@@ -105,6 +116,18 @@ jobs:
           working-directory: r-package/bayesiangpu
           extra-packages: any::rcmdcheck
           needs: check
+
+      - name: Vendor workspace crates for R CMD check
+        shell: bash
+        run: |
+          mkdir -p r-package/bayesiangpu/src/rust/crates
+          cp -r crates/bayesian-core r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
+          sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
+          mv "$CARGO_TOML.tmp" "$CARGO_TOML"
 
       - uses: r-lib/actions/check-r-package@v2
         with:
