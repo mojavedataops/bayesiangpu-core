@@ -1,0 +1,93 @@
+# bayesiangpu
+
+GPU-accelerated Bayesian inference for R.
+
+## Installation
+
+``` r
+# Install from GitHub
+remotes::install_github("mojavedataops/bayesiangpu-core", subdir = "r-package/bayesiangpu")
+```
+
+## Quick Start
+
+``` r
+library(bayesiangpu)
+
+# Build a Beta-Binomial model
+model <- Model() |>
+  param("theta", Beta(1, 1)) |>
+  observe(Binomial(100, "theta"), 65)
+
+# Run NUTS sampling
+result <- bg_sample(model, num_samples = 1000, num_chains = 4)
+
+# View results
+summary(result)
+
+# Plot posterior
+library(ggplot2)
+result |>
+  as_tibble() |>
+  ggplot(aes(x = theta)) +
+  geom_density(fill = "steelblue", alpha = 0.7)
+```
+
+## Features
+
+- **Fluent API** - Build models with pipe syntax
+- **NUTS Sampler** - Efficient No-U-Turn Sampler
+- **Automatic Diagnostics** - R-hat, ESS, divergence tracking
+- **Tidyverse Compatible** - Works with ggplot2, dplyr, tibble
+- **Native Performance** - Rust core with R bindings
+
+## Available Distributions
+
+### Priors
+
+- `Normal(loc, scale)` - Gaussian distribution
+- `HalfNormal(scale)` - Positive values only
+- `Beta(alpha, beta)` - \[0, 1\] interval
+- `Gamma(shape, rate)` - Positive values
+- `Uniform(low, high)` - Bounded uniform
+- `Exponential(rate)` - Waiting times
+- `Cauchy(loc, scale)` - Heavy tails
+- `StudentT(df, loc, scale)` - Robust inference
+- `LogNormal(loc, scale)` - Log-normal
+
+### Likelihoods
+
+- `Normal("mu", "sigma")` - Continuous data
+- `Bernoulli("p")` - Binary data
+- `Binomial(n, "p")` - Count of successes
+- `Poisson("rate")` - Count data
+
+## Example: Normal Mean Estimation
+
+``` r
+library(bayesiangpu)
+
+# Data
+data <- c(2.3, 2.1, 2.5, 2.4, 2.2, 2.6, 2.3, 2.4, 2.5, 2.2)
+
+# Build model
+model <- Model() |>
+  param("mu", Normal(0, 10)) |>
+  param("sigma", HalfNormal(1)) |>
+  observe(Normal("mu", "sigma"), data)
+
+# Sample
+result <- bg_sample(model, num_samples = 1000, num_chains = 4)
+
+# Results
+print(result)
+```
+
+## Requirements
+
+- R \>= 4.0
+- Rust \>= 1.70 (for building from source)
+
+## License
+
+MIT
