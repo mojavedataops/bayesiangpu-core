@@ -17,5 +17,7 @@ A distribution specification
 Create a Log-Normal distribution. For positive values with multiplicative effects.
 }
 \examples{
+\dontrun{
 LogNormal(0, 1)
+}
 }

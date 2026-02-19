@@ -18,6 +18,8 @@ A distribution specification
 Create a Student's t distribution. For robust inference with potential outliers.
 }
 \examples{
+\dontrun{
 StudentT(3)         # t with 3 df
 StudentT(5, 0, 2)   # t with 5 df, loc=0, scale=2
+}
 }

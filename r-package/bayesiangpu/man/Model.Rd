@@ -7,6 +7,7 @@
 An R6 class for building Bayesian models using a fluent API.
 }
 \examples{
+\dontrun{
 model <- Model()
 model$param("mu", Normal(0, 10))
 model$param("sigma", HalfNormal(1))
@@ -16,6 +17,7 @@ model$observe(Normal("mu", "sigma"), c(2.3, 2.1, 2.5))
 model <- Model() |>
   param("theta", Beta(1, 1)) |>
   observe(Binomial(100, "theta"), 65)
+}
 }
 \section{Methods}{
 

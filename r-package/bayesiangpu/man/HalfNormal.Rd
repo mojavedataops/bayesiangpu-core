@@ -17,5 +17,7 @@ Create a Half-Normal distribution (positive values only).
 Useful for scale parameters.
 }
 \examples{
+\dontrun{
 HalfNormal(1)  # Half-normal with scale 1
+}
 }

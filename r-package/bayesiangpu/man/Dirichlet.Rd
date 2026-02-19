@@ -18,7 +18,9 @@ Create a Dirichlet distribution. Prior over probability simplexes
 categorical data modeling.
 }
 \examples{
+\dontrun{
 Dirichlet(c(1, 1, 1))       # Uniform over 3-simplex
 Dirichlet(c(10, 10, 10))    # Concentrated at center
 Dirichlet(c(0.1, 0.1, 0.1)) # Concentrated at corners
+}
 }

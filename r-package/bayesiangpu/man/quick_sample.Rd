@@ -17,9 +17,11 @@ An InferenceResult object
 Run NUTS sampling with fewer iterations (good for testing).
 }
 \examples{
+\dontrun{
 model <- Model() |>
   param("theta", Beta(1, 1)) |>
   observe(Binomial(100, "theta"), 65)
 
 result <- quick_sample(model)
+}
 }

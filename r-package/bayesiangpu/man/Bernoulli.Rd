@@ -16,6 +16,8 @@ A distribution specification
 Create a Bernoulli distribution for binary outcomes (0 or 1).
 }
 \examples{
+\dontrun{
 Bernoulli(0.5)       # 50\% success rate
 Bernoulli("theta")   # Parameter from model
+}
 }

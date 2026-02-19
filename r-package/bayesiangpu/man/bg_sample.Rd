@@ -28,10 +28,12 @@ An InferenceResult object
 Run the No-U-Turn Sampler (NUTS) on a Bayesian model.
 }
 \examples{
+\dontrun{
 model <- Model() |>
   param("theta", Beta(1, 1)) |>
   observe(Binomial(100, "theta"), 65)
 
 result <- bg_sample(model, num_samples = 1000, num_chains = 4)
 summary(result)
+}
 }

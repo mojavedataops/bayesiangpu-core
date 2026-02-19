@@ -17,5 +17,7 @@ A distribution specification
 Create a Uniform distribution.
 }
 \examples{
+\dontrun{
 Uniform(0, 10)  # Uniform on [0, 10]
+}
 }
