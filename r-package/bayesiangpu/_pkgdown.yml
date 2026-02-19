@@ -12,3 +12,37 @@ navbar:
       icon: fab fa-github
       href: https://github.com/mojavedataops/bayesiangpu-core
 
+reference:
+  - title: "Distributions"
+    contents:
+      - Normal
+      - HalfNormal
+      - HalfCauchy
+      - Beta
+      - Gamma
+      - Uniform
+      - Exponential
+      - Cauchy
+      - StudentT
+      - LogNormal
+      - Bernoulli
+      - Binomial
+      - Poisson
+      - MultivariateNormal
+      - Dirichlet
+      - Multinomial
+
+  - title: "Model Building"
+    contents:
+      - Model
+      - param
+      - observe
+
+  - title: "Sampling"
+    contents:
+      - bg_sample
+      - quick_sample
+
+  - title: "Results"
+    contents:
+      - InferenceResult

@@ -124,12 +124,25 @@ Model <- R6::R6Class(
   )
 )
 
-# Enable pipe-friendly functions
+#' Add a parameter to a model (pipe-friendly)
+#'
+#' @param model A BayesianModel object
+#' @param name Parameter name
+#' @param distribution Prior distribution
+#' @param size Number of elements for vector parameters (defaults to 1)
+#' @return The model (invisibly, for piping)
 #' @export
 param <- function(model, name, distribution, size = 1L) {
   model$param(name, distribution, size = size)
 }
 
+#' Set observed data on a model (pipe-friendly)
+#'
+#' @param model A BayesianModel object
+#' @param distribution Likelihood distribution
+#' @param data Observed data points
+#' @param known Named list of per-observation known data
+#' @return The model (invisibly, for piping)
 #' @export
 observe <- function(model, distribution, data, known = NULL) {
   model$observe(distribution, data, known = known)
