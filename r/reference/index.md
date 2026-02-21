@@ -8,6 +8,8 @@
   : Half-Normal Distribution
 - [`HalfCauchy()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfCauchy.md)
   : Half-Cauchy Distribution
+- [`HalfStudentT()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfStudentT.md)
+  : Half Student's t Distribution
 - [`Beta()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Beta.md)
   : Beta Distribution
 - [`Gamma()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Gamma.md)
@@ -16,6 +18,8 @@
   : Uniform Distribution
 - [`Exponential()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Exponential.md)
   : Exponential Distribution
+- [`Gumbel()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Gumbel.md)
+  : Gumbel Distribution
 - [`Cauchy()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Cauchy.md)
   : Cauchy Distribution
 - [`StudentT()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/StudentT.md)
@@ -34,6 +38,8 @@
   : Dirichlet Distribution
 - [`Multinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Multinomial.md)
   : Multinomial Distribution
+- [`Pareto()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.md)
+  : Pareto Distribution
 - [`Laplace()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.md)
   : Laplace Distribution
 - [`Logistic()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Logistic.md)
@@ -44,6 +50,8 @@
   : Chi-Squared Distribution
 - [`TruncatedNormal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/TruncatedNormal.md)
   : Truncated Normal Distribution
+- [`Weibull()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Weibull.md)
+  : Weibull Distribution
 - [`print(`*`<bg_distribution>`*`)`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/print.bg_distribution.md)
   : Print a BayesianGPU Distribution
 
