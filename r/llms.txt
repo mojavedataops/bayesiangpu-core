@@ -92,5 +92,67 @@ print(result)
 
 MIT
 
-# 
+# Package index
+
+## Distributions
+
+- [`Normal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Normal.md)
+  : Normal Distribution
+- [`HalfNormal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfNormal.md)
+  : Half-Normal Distribution
+- [`HalfCauchy()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfCauchy.md)
+  : Half-Cauchy Distribution
+- [`Beta()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Beta.md)
+  : Beta Distribution
+- [`Gamma()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Gamma.md)
+  : Gamma Distribution
+- [`Uniform()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Uniform.md)
+  : Uniform Distribution
+- [`Exponential()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Exponential.md)
+  : Exponential Distribution
+- [`Cauchy()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Cauchy.md)
+  : Cauchy Distribution
+- [`StudentT()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/StudentT.md)
+  : Student's t Distribution
+- [`LogNormal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/LogNormal.md)
+  : Log-Normal Distribution
+- [`Bernoulli()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Bernoulli.md)
+  : Bernoulli Distribution
+- [`Binomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Binomial.md)
+  : Binomial Distribution
+- [`Poisson()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Poisson.md)
+  : Poisson Distribution
+- [`MultivariateNormal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/MultivariateNormal.md)
+  : Multivariate Normal Distribution
+- [`Dirichlet()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Dirichlet.md)
+  : Dirichlet Distribution
+- [`Multinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Multinomial.md)
+  : Multinomial Distribution
+- [`print(`*`<bg_distribution>`*`)`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/print.bg_distribution.md)
+  : Print a BayesianGPU Distribution
+
+## Model Building
+
+- [`Model`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Model.md)
+  : Bayesian Model Builder
+- [`param()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/param.md)
+  : Add a parameter to a model (pipe-friendly)
+- [`observe()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/observe.md)
+  : Set observed data on a model (pipe-friendly)
+
+## Sampling
+
+- [`bg_sample()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/bg_sample.md)
+  : Run NUTS Sampling
+- [`quick_sample()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/quick_sample.md)
+  : Quick Sampling
+
+## Results
+
+- [`InferenceResult`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/InferenceResult.md)
+  : Inference Result
+- [`as.data.frame(`*`<InferenceResult>`*`)`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/as.data.frame.InferenceResult.md)
+  : Convert InferenceResult to data.frame
+- [`summary(`*`<InferenceResult>`*`)`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/summary.InferenceResult.md)
+  : Summary of InferenceResult
 

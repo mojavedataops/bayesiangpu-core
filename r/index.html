@@ -63,12 +63,12 @@
 <code class="sourceCode R"><span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://github.com/mojavedataops/bayesiangpu-core" class="external-link">bayesiangpu</a></span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># Build a Beta-Binomial model</span></span>
-<span><span class="va">model</span> <span class="op">&lt;-</span> <span class="fu">Model</span><span class="op">(</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu">param</span><span class="op">(</span><span class="st">"theta"</span>, <span class="fu">Beta</span><span class="op">(</span><span class="fl">1</span>, <span class="fl">1</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu">observe</span><span class="op">(</span><span class="fu">Binomial</span><span class="op">(</span><span class="fl">100</span>, <span class="st">"theta"</span><span class="op">)</span>, <span class="fl">65</span><span class="op">)</span></span>
+<span><span class="va">model</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/Model.html">Model</a></span><span class="op">(</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu"><a href="reference/param.html">param</a></span><span class="op">(</span><span class="st">"theta"</span>, <span class="fu"><a href="reference/Beta.html">Beta</a></span><span class="op">(</span><span class="fl">1</span>, <span class="fl">1</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu"><a href="reference/observe.html">observe</a></span><span class="op">(</span><span class="fu"><a href="reference/Binomial.html">Binomial</a></span><span class="op">(</span><span class="fl">100</span>, <span class="st">"theta"</span><span class="op">)</span>, <span class="fl">65</span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># Run NUTS sampling</span></span>
-<span><span class="va">result</span> <span class="op">&lt;-</span> <span class="fu">bg_sample</span><span class="op">(</span><span class="va">model</span>, num_samples <span class="op">=</span> <span class="fl">1000</span>, num_chains <span class="op">=</span> <span class="fl">4</span><span class="op">)</span></span>
+<span><span class="va">result</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/bg_sample.html">bg_sample</a></span><span class="op">(</span><span class="va">model</span>, num_samples <span class="op">=</span> <span class="fl">1000</span>, num_chains <span class="op">=</span> <span class="fl">4</span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># View results</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/summary.html" class="external-link">summary</a></span><span class="op">(</span><span class="va">result</span><span class="op">)</span></span>
@@ -148,13 +148,13 @@
 <span><span class="va">data</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="fl">2.3</span>, <span class="fl">2.1</span>, <span class="fl">2.5</span>, <span class="fl">2.4</span>, <span class="fl">2.2</span>, <span class="fl">2.6</span>, <span class="fl">2.3</span>, <span class="fl">2.4</span>, <span class="fl">2.5</span>, <span class="fl">2.2</span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># Build model</span></span>
-<span><span class="va">model</span> <span class="op">&lt;-</span> <span class="fu">Model</span><span class="op">(</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu">param</span><span class="op">(</span><span class="st">"mu"</span>, <span class="fu">Normal</span><span class="op">(</span><span class="fl">0</span>, <span class="fl">10</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu">param</span><span class="op">(</span><span class="st">"sigma"</span>, <span class="fu">HalfNormal</span><span class="op">(</span><span class="fl">1</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
-<span>  <span class="fu">observe</span><span class="op">(</span><span class="fu">Normal</span><span class="op">(</span><span class="st">"mu"</span>, <span class="st">"sigma"</span><span class="op">)</span>, <span class="va">data</span><span class="op">)</span></span>
+<span><span class="va">model</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/Model.html">Model</a></span><span class="op">(</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu"><a href="reference/param.html">param</a></span><span class="op">(</span><span class="st">"mu"</span>, <span class="fu"><a href="reference/Normal.html">Normal</a></span><span class="op">(</span><span class="fl">0</span>, <span class="fl">10</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu"><a href="reference/param.html">param</a></span><span class="op">(</span><span class="st">"sigma"</span>, <span class="fu"><a href="reference/HalfNormal.html">HalfNormal</a></span><span class="op">(</span><span class="fl">1</span><span class="op">)</span><span class="op">)</span> <span class="op">|&gt;</span></span>
+<span>  <span class="fu"><a href="reference/observe.html">observe</a></span><span class="op">(</span><span class="fu"><a href="reference/Normal.html">Normal</a></span><span class="op">(</span><span class="st">"mu"</span>, <span class="st">"sigma"</span><span class="op">)</span>, <span class="va">data</span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># Sample</span></span>
-<span><span class="va">result</span> <span class="op">&lt;-</span> <span class="fu">bg_sample</span><span class="op">(</span><span class="va">model</span>, num_samples <span class="op">=</span> <span class="fl">1000</span>, num_chains <span class="op">=</span> <span class="fl">4</span><span class="op">)</span></span>
+<span><span class="va">result</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/bg_sample.html">bg_sample</a></span><span class="op">(</span><span class="va">model</span>, num_samples <span class="op">=</span> <span class="fl">1000</span>, num_chains <span class="op">=</span> <span class="fl">4</span><span class="op">)</span></span>
 <span></span>
 <span><span class="co"># Results</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/print.html" class="external-link">print</a></span><span class="op">(</span><span class="va">result</span><span class="op">)</span></span></code></pre></div>
