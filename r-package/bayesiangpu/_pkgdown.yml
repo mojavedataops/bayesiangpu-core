@@ -31,6 +31,7 @@ reference:
       - MultivariateNormal
       - Dirichlet
       - Multinomial
+      - print.bg_distribution
 
   - title: "Model Building"
     contents:
@@ -46,3 +47,5 @@ reference:
   - title: "Results"
     contents:
       - InferenceResult
+      - as.data.frame.InferenceResult
+      - summary.InferenceResult
