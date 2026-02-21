@@ -445,6 +445,84 @@ impl DynamicModel {
                     .sub(log_x)
                     .add_scalar(log_norm)
             }
+            "Laplace" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                // log Laplace(x|loc,scale) = -ln(2*scale) - |x-loc|/scale
+                let log_norm = -(2.0 * scale).ln();
+                value
+                    .clone()
+                    .sub_scalar(loc)
+                    .abs()
+                    .div_scalar(scale)
+                    .neg()
+                    .add_scalar(log_norm)
+            }
+            "Logistic" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let z = value.clone().sub_scalar(loc).div_scalar(scale);
+                let log_scale = scale.ln();
+                // log f = -z - log(s) - 2*log(1 + exp(-z))
+                let neg_z = z.clone().neg();
+                let softplus = neg_z.clone().exp().add_scalar(1.0).log();
+                z.neg().sub_scalar(log_scale) - softplus.mul_scalar(2.0)
+            }
+            "InverseGamma" => {
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
+                let beta_param = self.get_param_f64(&spec.params, "beta", 1.0) as f32;
+                let x_clamped = value.clone().clamp(1e-10, f32::MAX);
+                let log_norm = alpha * beta_param.ln() - ln_gamma(alpha as f64) as f32;
+                let log_x = x_clamped.clone().log();
+                // -beta/x
+                let neg_beta_over_x = x_clamped.recip().mul_scalar(-beta_param);
+                log_x
+                    .mul_scalar(-(alpha + 1.0))
+                    .add(neg_beta_over_x)
+                    .add_scalar(log_norm)
+            }
+            "ChiSquared" => {
+                let k = self.get_param_f64(&spec.params, "k", 1.0) as f32;
+                // ChiSquared(k) = Gamma(k/2, 1/2)
+                let shape = k / 2.0;
+                let rate = 0.5_f32;
+                let log_norm = shape * rate.ln() - ln_gamma(shape as f64) as f32;
+                let x_clamped = value.clone().clamp(1e-10, f32::MAX);
+                let log_x = x_clamped.clone().log();
+                log_x
+                    .mul_scalar(shape - 1.0)
+                    .sub(x_clamped.mul_scalar(rate))
+                    .add_scalar(log_norm)
+            }
+            "TruncatedNormal" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let low = self.get_param_f64(&spec.params, "low", f64::NEG_INFINITY) as f32;
+                let high = self.get_param_f64(&spec.params, "high", f64::INFINITY) as f32;
+                // Normal log_prob
+                let z = value.clone().sub_scalar(loc).div_scalar(scale);
+                let log_norm = -0.5 * (2.0 * std::f32::consts::PI * scale * scale).ln();
+                let logp = z.powf_scalar(2.0).mul_scalar(-0.5).add_scalar(log_norm);
+                // Subtract log normalizing constant (CDF difference)
+                fn normal_cdf_tn(x: f32) -> f32 {
+                    0.5 * (1.0 + erf_approx_tn(x / std::f32::consts::SQRT_2))
+                }
+                fn erf_approx_tn(x: f32) -> f32 {
+                    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
+                    let ax = x.abs();
+                    let t = 1.0 / (1.0 + 0.3275911 * ax);
+                    let poly = t
+                        * (0.254_829_6_f32
+                            + t * (-0.284_496_74_f32
+                                + t * (1.421_413_7_f32
+                                    + t * (-1.453_152_f32 + t * 1.061_405_4_f32))));
+                    sign * (1.0 - poly * (-ax * ax).exp())
+                }
+                let cdf_high = normal_cdf_tn((high - loc) / scale);
+                let cdf_low = normal_cdf_tn((low - loc) / scale);
+                let log_z = (cdf_high - cdf_low).max(1e-10).ln();
+                logp.sub_scalar(log_z)
+            }
             _ => {
                 // Unknown distribution, return 0
                 Tensor::<WasmBackend, 1>::zeros([1], &self.device)
@@ -637,7 +715,7 @@ impl DynamicModel {
         match self.likelihood.distribution.dist_type.as_str() {
             "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta"
             | "InverseGamma" | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial"
-            | "Poisson" => true,
+            | "Poisson" | "Laplace" | "Logistic" | "ChiSquared" | "TruncatedNormal" => true,
             _ => false,
         }
     }
@@ -778,6 +856,81 @@ impl DynamicModel {
                 let high = self.get_param_f64(&spec.params, "high", 1.0) as f32;
                 let log_prob = -((high - low).ln()) as f64;
                 (log_prob, 0.0) // Uniform has zero gradient
+            }
+            "Laplace" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let diff = value - loc;
+                let log_prob = (-(2.0 * scale).ln() - diff.abs() / scale) as f64;
+                let grad = if diff > 0.0 {
+                    -1.0 / scale
+                } else if diff < 0.0 {
+                    1.0 / scale
+                } else {
+                    0.0
+                };
+                (log_prob, grad as f64)
+            }
+            "Logistic" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let z = (value - loc) / scale;
+                let exp_neg_z = (-z).exp();
+                let log_prob = (-z - scale.ln() - 2.0 * (1.0 + exp_neg_z).ln()) as f64;
+                // grad = (1 - 2*sigmoid(z)) / scale
+                let sig = 1.0 / (1.0 + exp_neg_z);
+                let grad = ((1.0 - 2.0 * sig) / scale) as f64;
+                (log_prob, grad)
+            }
+            "InverseGamma" => {
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
+                let beta_param = self.get_param_f64(&spec.params, "beta", 1.0) as f32;
+                let x = value.max(1e-10);
+                let log_norm = alpha * beta_param.ln() - ln_gamma(alpha as f64) as f32;
+                let log_prob = (log_norm - (alpha + 1.0) * x.ln() - beta_param / x) as f64;
+                // d/dx [-(alpha+1)*ln(x) - beta/x] = -(alpha+1)/x + beta/x^2
+                let grad = (-(alpha + 1.0) / x + beta_param / (x * x)) as f64;
+                (log_prob, grad)
+            }
+            "ChiSquared" => {
+                let k = self.get_param_f64(&spec.params, "k", 1.0) as f32;
+                let shape = k / 2.0;
+                let rate = 0.5_f32;
+                let x = value.max(1e-10);
+                let log_norm = shape * rate.ln() - ln_gamma(shape as f64) as f32;
+                let log_prob = (log_norm + (shape - 1.0) * x.ln() - rate * x) as f64;
+                let grad = ((shape - 1.0) / x - rate) as f64;
+                (log_prob, grad)
+            }
+            "TruncatedNormal" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let z = (value - loc) / scale;
+                let log_norm = -0.5 * (2.0 * std::f32::consts::PI * scale * scale).ln();
+                let log_prob_normal = (log_norm - 0.5 * z * z) as f64;
+                // Subtract log CDF normalization
+                let low = self.get_param_f64(&spec.params, "low", f64::NEG_INFINITY) as f32;
+                let high = self.get_param_f64(&spec.params, "high", f64::INFINITY) as f32;
+                fn normal_cdf_grad(x: f32) -> f32 {
+                    0.5 * (1.0 + erf_approx_grad(x / std::f32::consts::SQRT_2))
+                }
+                fn erf_approx_grad(x: f32) -> f32 {
+                    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
+                    let ax = x.abs();
+                    let t = 1.0 / (1.0 + 0.3275911 * ax);
+                    let poly = t
+                        * (0.254_829_59_f32
+                            + t * (-0.284_496_74_f32
+                                + t * (1.421_413_7_f32
+                                    + t * (-1.453_152_f32 + t * 1.061_405_4_f32))));
+                    sign * (1.0 - poly * (-ax * ax).exp())
+                }
+                let cdf_high = normal_cdf_grad((high - loc) / scale);
+                let cdf_low = normal_cdf_grad((low - loc) / scale);
+                let log_z = (cdf_high - cdf_low).max(1e-10).ln();
+                let log_prob = log_prob_normal - log_z as f64;
+                let grad = (-(value - loc) / (scale * scale)) as f64;
+                (log_prob, grad)
             }
             _ => (0.0, 0.0),
         }
@@ -1009,6 +1162,65 @@ fn generate_inits(
                             .and_then(|v| v.as_f64())
                             .unwrap_or(0.0) as f32;
                         loc + 0.1 * (chain_idx as f32 - num_chains as f32 / 2.0)
+                    }
+                    "InverseGamma" => {
+                        // InverseGamma: positive, use beta/(alpha-1) as mode hint
+                        let alpha = prior
+                            .params
+                            .get("alpha")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0) as f32;
+                        let beta_param = prior
+                            .params
+                            .get("beta")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0) as f32;
+                        let mode = if alpha > 1.0 {
+                            beta_param / (alpha + 1.0)
+                        } else {
+                            beta_param
+                        };
+                        mode.max(0.1) + 0.1 * chain_idx as f32
+                    }
+                    "ChiSquared" => {
+                        // ChiSquared: positive, initialize around k (degrees of freedom)
+                        let k = prior
+                            .params
+                            .get("k")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0) as f32;
+                        k.max(0.1) + 0.1 * chain_idx as f32
+                    }
+                    "Laplace" | "Logistic" => {
+                        // Real-valued, initialize near location
+                        let loc = prior
+                            .params
+                            .get("loc")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0) as f32;
+                        loc + 0.1 * (chain_idx as f32 - num_chains as f32 / 2.0)
+                    }
+                    "TruncatedNormal" => {
+                        // Initialize at midpoint of (low, high)
+                        let low = prior
+                            .params
+                            .get("low")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(-1.0) as f32;
+                        let high = prior
+                            .params
+                            .get("high")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(1.0) as f32;
+                        let loc = prior
+                            .params
+                            .get("loc")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(((low + high) / 2.0) as f64)
+                            as f32;
+                        // Clamp to (low, high) range
+                        loc.clamp(low + 0.01, high - 0.01)
+                            + 0.01 * (chain_idx as f32 - num_chains as f32 / 2.0)
                     }
                     _ => {
                         // Normal and others: small perturbation around 0

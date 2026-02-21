@@ -306,6 +306,128 @@ pub fn cauchy(loc: f64, scale: f64) -> PyDistribution {
     }
 }
 
+/// Laplace (double exponential) distribution
+///
+/// Heavier tails than Normal, useful for sparsity-inducing priors.
+///
+/// Args:
+///     loc: Location parameter (mean)
+///     scale: Scale parameter (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Laplace(0, 1)  # Standard Laplace
+#[pyfunction]
+pub fn laplace(loc: f64, scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "Laplace".to_string(),
+        params,
+    }
+}
+
+/// Logistic distribution
+///
+/// Similar shape to Normal but with heavier tails.
+///
+/// Args:
+///     loc: Location parameter (mean)
+///     scale: Scale parameter (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Logistic(0, 1)  # Standard Logistic
+#[pyfunction]
+pub fn logistic(loc: f64, scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "Logistic".to_string(),
+        params,
+    }
+}
+
+/// Inverse Gamma distribution
+///
+/// Commonly used as a prior for variance parameters.
+///
+/// Args:
+///     alpha: Shape parameter (must be positive)
+///     beta: Scale parameter (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> InverseGamma(2, 1)  # Shape=2, scale=1
+#[pyfunction]
+pub fn inverse_gamma(alpha: f64, beta: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("alpha".to_string(), ParamValue::Number(alpha));
+    params.insert("beta".to_string(), ParamValue::Number(beta));
+    PyDistribution {
+        dist_type: "InverseGamma".to_string(),
+        params,
+    }
+}
+
+/// Chi-Squared distribution
+///
+/// Special case of Gamma distribution, used in hypothesis testing.
+///
+/// Args:
+///     df: Degrees of freedom (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> ChiSquared(5)  # 5 degrees of freedom
+#[pyfunction]
+pub fn chi_squared(df: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("df".to_string(), ParamValue::Number(df));
+    PyDistribution {
+        dist_type: "ChiSquared".to_string(),
+        params,
+    }
+}
+
+/// Truncated Normal distribution
+///
+/// Normal distribution constrained to [low, high].
+///
+/// Args:
+///     loc: Location parameter (mean of underlying normal)
+///     scale: Scale parameter (std dev, must be positive)
+///     low: Lower bound
+///     high: Upper bound
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> TruncatedNormal(0, 1, -2, 2)  # Normal(0,1) truncated to [-2, 2]
+#[pyfunction]
+pub fn truncated_normal(loc: f64, scale: f64, low: f64, high: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    params.insert("low".to_string(), ParamValue::Number(low));
+    params.insert("high".to_string(), ParamValue::Number(high));
+    PyDistribution {
+        dist_type: "TruncatedNormal".to_string(),
+        params,
+    }
+}
+
 /// Log-Normal distribution
 ///
 /// For positive values with multiplicative effects.

@@ -384,6 +384,82 @@ fn multinomial_dist(n: i32, probs: Robj) -> String {
     serde_json::to_string(&dist).unwrap()
 }
 
+/// Create a Laplace distribution specification
+/// @export
+#[extendr]
+fn laplace_dist(loc: f64, scale: f64) -> String {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+
+    let dist = RDistribution {
+        dist_type: "Laplace".to_string(),
+        params,
+    };
+    serde_json::to_string(&dist).unwrap()
+}
+
+/// Create a Logistic distribution specification
+/// @export
+#[extendr]
+fn logistic_dist(loc: f64, scale: f64) -> String {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+
+    let dist = RDistribution {
+        dist_type: "Logistic".to_string(),
+        params,
+    };
+    serde_json::to_string(&dist).unwrap()
+}
+
+/// Create an Inverse Gamma distribution specification
+/// @export
+#[extendr]
+fn inverse_gamma_dist(alpha: f64, beta: f64) -> String {
+    let mut params = HashMap::new();
+    params.insert("alpha".to_string(), ParamValue::Number(alpha));
+    params.insert("beta".to_string(), ParamValue::Number(beta));
+
+    let dist = RDistribution {
+        dist_type: "InverseGamma".to_string(),
+        params,
+    };
+    serde_json::to_string(&dist).unwrap()
+}
+
+/// Create a Chi-Squared distribution specification
+/// @export
+#[extendr]
+fn chi_squared_dist(df: f64) -> String {
+    let mut params = HashMap::new();
+    params.insert("df".to_string(), ParamValue::Number(df));
+
+    let dist = RDistribution {
+        dist_type: "ChiSquared".to_string(),
+        params,
+    };
+    serde_json::to_string(&dist).unwrap()
+}
+
+/// Create a Truncated Normal distribution specification
+/// @export
+#[extendr]
+fn truncated_normal_dist(loc: f64, scale: f64, low: f64, high: f64) -> String {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    params.insert("low".to_string(), ParamValue::Number(low));
+    params.insert("high".to_string(), ParamValue::Number(high));
+
+    let dist = RDistribution {
+        dist_type: "TruncatedNormal".to_string(),
+        params,
+    };
+    serde_json::to_string(&dist).unwrap()
+}
+
 /// Helper function to parse a matrix from R (matrix or list of lists)
 fn parse_matrix(obj: &Robj) -> Vec<Vec<f64>> {
     // Try as a matrix first
@@ -1049,6 +1125,11 @@ extendr_module! {
     fn multivariate_normal_dist;
     fn dirichlet_dist;
     fn multinomial_dist;
+    fn laplace_dist;
+    fn logistic_dist;
+    fn inverse_gamma_dist;
+    fn chi_squared_dist;
+    fn truncated_normal_dist;
     fn run_nuts_sampling;
     fn run_advi;
 }

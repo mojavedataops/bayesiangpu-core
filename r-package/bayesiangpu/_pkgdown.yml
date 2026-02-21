@@ -31,6 +31,11 @@ reference:
       - MultivariateNormal
       - Dirichlet
       - Multinomial
+      - Laplace
+      - Logistic
+      - InverseGamma
+      - ChiSquared
+      - TruncatedNormal
       - print.bg_distribution
 
   - title: "Model Building"

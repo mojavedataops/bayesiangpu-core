@@ -11,7 +11,8 @@ use burn::backend::{Autodiff, NdArray};
 use burn::prelude::*;
 
 use bayesian_core::{
-    Beta, Distribution, Exponential, Gamma, HalfCauchy, HalfNormal, Normal, Support, Uniform,
+    ln_gamma, Beta, Distribution, Exponential, Gamma, HalfCauchy, HalfNormal, Normal, Support,
+    Uniform,
 };
 use bayesian_diagnostics::{ess, rhat};
 use bayesian_rng::GpuRng;
@@ -95,7 +96,13 @@ impl DynamicModel {
     fn is_positive_support_dist(dist_type: &str) -> bool {
         matches!(
             dist_type,
-            "HalfCauchy" | "HalfNormal" | "Gamma" | "Exponential" | "LogNormal"
+            "HalfCauchy"
+                | "HalfNormal"
+                | "Gamma"
+                | "Exponential"
+                | "LogNormal"
+                | "InverseGamma"
+                | "ChiSquared"
         )
     }
 
@@ -228,6 +235,97 @@ impl DynamicModel {
                 let logp = half_cauchy.log_prob(&transformed);
                 // Add Jacobian: log|d/dx exp(x)| = x
                 logp + value.clone()
+            }
+            "Laplace" => {
+                let loc = self.get_f64_param(&dist.params, "loc");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                // log Laplace(x|loc,scale) = -ln(2*scale) - |x-loc|/scale
+                let loc_t = self.scalar_tensor(loc);
+                let scale_t = self.scalar_tensor(scale);
+                let log_norm = -((2.0 * scale) as f32).ln();
+                let diff = value.clone() - loc_t;
+                let abs_diff = diff.abs();
+                (abs_diff / scale_t).neg().add_scalar(log_norm)
+            }
+            "Logistic" => {
+                let loc = self.get_f64_param(&dist.params, "loc");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                // log Logistic(x|loc,scale) = -(x-loc)/scale - log(scale) - 2*log(1 + exp(-(x-loc)/scale))
+                let z = value
+                    .clone()
+                    .sub_scalar(loc as f32)
+                    .div_scalar(scale as f32);
+                let log_scale = (scale as f32).ln();
+                // softplus(-z) = log(1 + exp(-z))
+                let neg_z = z.clone().neg();
+                let sp = neg_z.exp().add_scalar(1.0).log();
+                z.neg().sub_scalar(log_scale) - sp.mul_scalar(2.0)
+            }
+            "InverseGamma" => {
+                // Positive support - value is in log space
+                let alpha = self.get_f64_param(&dist.params, "alpha");
+                let beta_param = self.get_f64_param(&dist.params, "beta");
+                // x = exp(v), ln(x) = v, 1/x = exp(-v)
+                let log_norm = (alpha * beta_param.ln() - ln_gamma(alpha)) as f32;
+                let log_x = value.clone(); // since x = exp(v), log(x) = v
+                let inv_x = value.clone().neg().exp(); // 1/x = exp(-v)
+                let logp = log_x
+                    .mul_scalar(-(alpha as f32 + 1.0))
+                    .sub(inv_x.mul_scalar(beta_param as f32))
+                    .add_scalar(log_norm);
+                // Jacobian: log|d/dv exp(v)| = v
+                logp + value.clone()
+            }
+            "ChiSquared" => {
+                // Positive support - value is in log space
+                // ChiSquared(k) = Gamma(k/2, 1/2)
+                let k = self.get_f64_param(&dist.params, "k");
+                let shape = k / 2.0;
+                let rate = 0.5_f64;
+                let transformed = value.clone().exp();
+                let log_norm = (shape * rate.ln() - ln_gamma(shape)) as f32;
+                let log_x = value.clone();
+                let logp = log_x
+                    .mul_scalar((shape - 1.0) as f32)
+                    .sub(transformed.mul_scalar(rate as f32))
+                    .add_scalar(log_norm);
+                // Jacobian
+                logp + value.clone()
+            }
+            "TruncatedNormal" => {
+                let loc = self.get_f64_param(&dist.params, "loc");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                let low = self.get_f64_param(&dist.params, "low");
+                let high = self.get_f64_param(&dist.params, "high");
+                // TruncatedNormal log_prob = Normal.log_prob(x) - log(Phi((high-loc)/scale) - Phi((low-loc)/scale))
+                let z = value
+                    .clone()
+                    .sub_scalar(loc as f32)
+                    .div_scalar(scale as f32);
+                let log_norm_const = -0.5 * (2.0 * std::f64::consts::PI).ln() - scale.ln();
+                let logp_normal = z
+                    .powf_scalar(2.0)
+                    .mul_scalar(-0.5)
+                    .add_scalar(log_norm_const as f32);
+                // Compute log normalizing constant using f64
+                fn normal_cdf_f64(x: f64) -> f64 {
+                    0.5 * (1.0 + erf_approx(x / std::f64::consts::SQRT_2))
+                }
+                fn erf_approx(x: f64) -> f64 {
+                    // Abramowitz and Stegun approximation
+                    let sign = if x >= 0.0 { 1.0 } else { -1.0 };
+                    let x = x.abs();
+                    let t = 1.0 / (1.0 + 0.3275911 * x);
+                    let poly = t
+                        * (0.254829592
+                            + t * (-0.284496736
+                                + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+                    sign * (1.0 - poly * (-x * x).exp())
+                }
+                let cdf_high = normal_cdf_f64((high - loc) / scale);
+                let cdf_low = normal_cdf_f64((low - loc) / scale);
+                let log_z = ((cdf_high - cdf_low).max(1e-10)).ln() as f32;
+                logp_normal - log_z
             }
             _ => {
                 // Default: just return 0 (improper uniform)
@@ -382,10 +480,11 @@ impl DynamicModel {
     #[allow(dead_code)]
     fn get_support(&self, dist: &PyDistribution) -> Support {
         match dist.dist_type.as_str() {
-            "Normal" | "StudentT" | "Cauchy" => Support::Real,
-            "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal" => {
-                Support::Positive
+            "Normal" | "StudentT" | "Cauchy" | "Laplace" | "Logistic" | "TruncatedNormal" => {
+                Support::Real
             }
+            "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal"
+            | "InverseGamma" | "ChiSquared" => Support::Positive,
             "Beta" | "Uniform" => Support::UnitInterval,
             _ => Support::Real,
         }

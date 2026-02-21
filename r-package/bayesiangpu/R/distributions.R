@@ -295,6 +295,97 @@ Multinomial <- function(n, probs) {
   )
 }
 
+#' Laplace Distribution
+#'
+#' Create a Laplace (double exponential) distribution. Heavier tails than
+#' the Normal distribution, useful for sparsity-inducing priors.
+#'
+#' @param loc Location parameter (mean)
+#' @param scale Scale parameter (must be positive)
+#' @return A distribution specification
+#' @export
+#' @examples
+#' Laplace(0, 1)  # Standard Laplace
+Laplace <- function(loc, scale) {
+  structure(
+    laplace_dist(loc, scale),
+    class = c("bg_distribution", "character")
+  )
+}
+
+#' Logistic Distribution
+#'
+#' Create a Logistic distribution. Similar shape to Normal but with
+#' heavier tails, related to the logistic function.
+#'
+#' @param loc Location parameter (mean)
+#' @param scale Scale parameter (must be positive)
+#' @return A distribution specification
+#' @export
+#' @examples
+#' Logistic(0, 1)  # Standard Logistic
+Logistic <- function(loc, scale) {
+  structure(
+    logistic_dist(loc, scale),
+    class = c("bg_distribution", "character")
+  )
+}
+
+#' Inverse Gamma Distribution
+#'
+#' Create an Inverse Gamma distribution. Commonly used as a prior for
+#' variance parameters in Bayesian models.
+#'
+#' @param alpha Shape parameter (must be positive)
+#' @param beta Scale parameter (must be positive)
+#' @return A distribution specification
+#' @export
+#' @examples
+#' InverseGamma(2, 1)  # Shape=2, scale=1
+InverseGamma <- function(alpha, beta) {
+  structure(
+    inverse_gamma_dist(alpha, beta),
+    class = c("bg_distribution", "character")
+  )
+}
+
+#' Chi-Squared Distribution
+#'
+#' Create a Chi-Squared distribution. A special case of the Gamma
+#' distribution, used in hypothesis testing and confidence intervals.
+#'
+#' @param df Degrees of freedom (must be positive)
+#' @return A distribution specification
+#' @export
+#' @examples
+#' ChiSquared(5)  # 5 degrees of freedom
+ChiSquared <- function(df) {
+  structure(
+    chi_squared_dist(df),
+    class = c("bg_distribution", "character")
+  )
+}
+
+#' Truncated Normal Distribution
+#'
+#' Create a Truncated Normal distribution. A Normal distribution
+#' constrained to the interval [low, high].
+#'
+#' @param loc Location parameter (mean of underlying normal)
+#' @param scale Scale parameter (std dev of underlying normal, must be positive)
+#' @param low Lower bound
+#' @param high Upper bound
+#' @return A distribution specification
+#' @export
+#' @examples
+#' TruncatedNormal(0, 1, -2, 2)  # Normal(0,1) truncated to [-2, 2]
+TruncatedNormal <- function(loc, scale, low, high) {
+  structure(
+    truncated_normal_dist(loc, scale, low, high),
+    class = c("bg_distribution", "character")
+  )
+}
+
 #' @export
 print.bg_distribution <- function(x, ...) {
   dist <- jsonlite::fromJSON(x)
