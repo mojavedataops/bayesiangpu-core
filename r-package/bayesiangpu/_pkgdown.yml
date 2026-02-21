@@ -33,6 +33,11 @@ reference:
       - MultivariateNormal
       - Dirichlet
       - Multinomial
+      - NegativeBinomial
+      - Categorical
+      - Geometric
+      - DiscreteUniform
+      - BetaBinomial
       - Pareto
       - Laplace
       - Logistic

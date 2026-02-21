@@ -71,6 +71,13 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(binomial, m)?)?;
     m.add_function(wrap_pyfunction!(poisson, m)?)?;
 
+    // Discrete distributions
+    m.add_function(wrap_pyfunction!(negative_binomial, m)?)?;
+    m.add_function(wrap_pyfunction!(categorical, m)?)?;
+    m.add_function(wrap_pyfunction!(geometric, m)?)?;
+    m.add_function(wrap_pyfunction!(discrete_uniform, m)?)?;
+    m.add_function(wrap_pyfunction!(beta_binomial, m)?)?;
+
     // Sampling functions
     m.add_function(wrap_pyfunction!(sample, m)?)?;
     m.add_function(wrap_pyfunction!(quick_sample, m)?)?;

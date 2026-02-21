@@ -461,6 +461,99 @@ HalfStudentT <- function(df, scale = 1) {
   structure(result, class = c("bg_distribution", "character"))
 }
 
+#' Negative Binomial Distribution
+#'
+#' Create a Negative Binomial distribution. Models the number of failures
+#' before the r-th success. Useful for overdispersed count data.
+#'
+#' @param r Number of successes (r > 0)
+#' @param p Success probability (0 < p < 1)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' NegativeBinomial(5, 0.3)  # r=5, p=0.3
+#' }
+NegativeBinomial <- function(r, p) {
+  result <- negative_binomial_dist(r, p)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Categorical Distribution
+#'
+#' Create a Categorical distribution. Models a single draw from K categories
+#' with specified probabilities. Primarily used as a likelihood distribution.
+#'
+#' @param probs Probability vector (must sum to 1, at least 2 categories)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Categorical(c(0.2, 0.3, 0.5))  # 3 categories
+#' }
+Categorical <- function(probs) {
+  if (length(probs) < 2) {
+    stop("Categorical requires at least 2 categories")
+  }
+  result <- categorical_dist(probs)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Geometric Distribution
+#'
+#' Create a Geometric distribution. Models the number of failures before
+#' the first success. A special case of the Negative Binomial with r=1.
+#'
+#' @param p Success probability (0 < p < 1)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Geometric(0.3)  # p=0.3
+#' }
+Geometric <- function(p) {
+  result <- geometric_dist(p)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Discrete Uniform Distribution
+#'
+#' Create a Discrete Uniform distribution. Each integer value in
+#' [low, high] has equal probability.
+#'
+#' @param low Lower bound (integer)
+#' @param high Upper bound (integer)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' DiscreteUniform(1, 6)  # Fair die
+#' }
+DiscreteUniform <- function(low, high) {
+  result <- discrete_uniform_dist(low, high)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Beta-Binomial Distribution
+#'
+#' Create a Beta-Binomial distribution. A compound distribution where
+#' the success probability follows a Beta distribution. Useful for
+#' overdispersed binomial data.
+#'
+#' @param n Number of trials (positive integer)
+#' @param alpha First shape parameter of the Beta prior (alpha > 0)
+#' @param beta Second shape parameter of the Beta prior (beta > 0)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' BetaBinomial(10, 2, 5)  # n=10, alpha=2, beta=5
+#' }
+BetaBinomial <- function(n, alpha, beta) {
+  result <- beta_binomial_dist(n, alpha, beta)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
 #' @export
 print.bg_distribution <- function(x, ...) {
   dist <- jsonlite::fromJSON(x)

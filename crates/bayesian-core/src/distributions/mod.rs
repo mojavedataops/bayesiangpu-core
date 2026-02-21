@@ -4,12 +4,16 @@
 //! the Burn framework's autodiff backend for gradient-based inference.
 
 pub mod beta;
+pub mod beta_binomial;
+pub mod categorical;
 pub mod cauchy;
 pub mod chi_squared;
 pub mod dirichlet;
 pub mod dirichlet_multinomial;
+pub mod discrete_uniform;
 pub mod exponential;
 pub mod gamma;
+pub mod geometric;
 pub mod gumbel;
 pub mod half_cauchy;
 pub mod half_normal;
@@ -20,6 +24,7 @@ pub mod log_normal;
 pub mod logistic;
 pub mod multinomial;
 pub mod multivariate_normal;
+pub mod negative_binomial;
 pub mod normal;
 pub mod pareto;
 pub mod stick_breaking;
@@ -30,12 +35,16 @@ pub mod weibull;
 
 // Re-export distribution types
 pub use beta::Beta;
+pub use beta_binomial::BetaBinomial;
+pub use categorical::Categorical;
 pub use cauchy::Cauchy;
 pub use chi_squared::ChiSquared;
 pub use dirichlet::Dirichlet;
 pub use dirichlet_multinomial::DirichletMultinomial;
+pub use discrete_uniform::DiscreteUniform;
 pub use exponential::Exponential;
 pub use gamma::Gamma;
+pub use geometric::Geometric;
 pub use gumbel::Gumbel;
 pub use half_cauchy::HalfCauchy;
 pub use half_normal::HalfNormal;
@@ -46,6 +55,7 @@ pub use log_normal::LogNormal;
 pub use logistic::Logistic;
 pub use multinomial::{log_multinomial_coefficient, Multinomial};
 pub use multivariate_normal::{mvn_from_covariance, mvn_from_precision, MultivariateNormal};
+pub use negative_binomial::NegativeBinomial;
 pub use normal::Normal;
 pub use pareto::Pareto;
 pub use stick_breaking::{StickBreaking, GEM};

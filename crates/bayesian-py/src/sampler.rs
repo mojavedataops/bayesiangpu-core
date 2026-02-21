@@ -391,6 +391,49 @@ impl DynamicModel {
                 // Jacobian
                 logp + value.clone()
             }
+            "NegativeBinomial" => {
+                // Discrete distribution - rarely used as prior, compute log_prob directly
+                let r = self.get_f64_param(&dist.params, "r");
+                let p = self.get_f64_param(&dist.params, "p");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let logp = ln_gamma(k + r) - ln_gamma(k + 1.0) - ln_gamma(r)
+                    + r * p.ln()
+                    + k * (1.0 - p).ln();
+                self.scalar_tensor(logp)
+            }
+            "Geometric" => {
+                let p = self.get_f64_param(&dist.params, "p");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let logp = p.ln() + k * (1.0 - p).ln();
+                self.scalar_tensor(logp)
+            }
+            "DiscreteUniform" => {
+                let low = self.get_f64_param(&dist.params, "low");
+                let high = self.get_f64_param(&dist.params, "high");
+                let n = high - low + 1.0;
+                let logp = -(n.ln());
+                self.scalar_tensor(logp)
+            }
+            "BetaBinomial" => {
+                let n = self.get_f64_param(&dist.params, "n");
+                let alpha = self.get_f64_param(&dist.params, "alpha");
+                let beta_param = self.get_f64_param(&dist.params, "beta");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let ln_choose = ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0);
+                let ln_beta_post = ln_gamma(alpha + k) + ln_gamma(beta_param + n - k)
+                    - ln_gamma(alpha + beta_param + n);
+                let ln_beta_prior =
+                    ln_gamma(alpha) + ln_gamma(beta_param) - ln_gamma(alpha + beta_param);
+                let logp = ln_choose + ln_beta_post - ln_beta_prior;
+                self.scalar_tensor(logp)
+            }
+            "Categorical" => {
+                // Categorical as prior: return 0 (improper uniform) as fallback
+                Tensor::<PyBackend, 1>::zeros([1], &self.device)
+            }
             _ => {
                 // Default: just return 0 (improper uniform)
                 Tensor::<PyBackend, 1>::zeros([1], &self.device)
@@ -551,6 +594,8 @@ impl DynamicModel {
                 Support::Positive
             }
             "Beta" | "Uniform" => Support::UnitInterval,
+            "NegativeBinomial" | "Categorical" | "Geometric" | "DiscreteUniform"
+            | "BetaBinomial" => Support::Real,
             _ => Support::Real,
         }
     }

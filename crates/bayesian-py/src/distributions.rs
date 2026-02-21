@@ -767,3 +767,135 @@ pub fn multinomial(n: usize, probs: &Bound<'_, PyAny>) -> PyResult<PyDistributio
         params,
     })
 }
+
+/// Negative Binomial distribution
+///
+/// Models the number of failures before r successes.
+///
+/// Args:
+///     r: Number of successes (positive)
+///     p: Success probability (0 < p < 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> NegativeBinomial(5, 0.5)
+#[pyfunction]
+#[pyo3(signature = (r, p))]
+pub fn negative_binomial(r: f64, p: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("r".to_string(), ParamValue::Number(r));
+    params.insert("p".to_string(), ParamValue::Number(p));
+    PyDistribution {
+        dist_type: "NegativeBinomial".to_string(),
+        params,
+    }
+}
+
+/// Categorical distribution
+///
+/// Single draw from K categories with specified probabilities.
+///
+/// Args:
+///     probs: Probability vector (list of non-negative floats summing to 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Categorical([0.2, 0.3, 0.5])
+#[pyfunction]
+pub fn categorical(probs: Vec<f64>) -> PyResult<PyDistribution> {
+    if probs.len() < 2 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Categorical requires at least 2 categories",
+        ));
+    }
+
+    let mut params = HashMap::new();
+    let probs_json = serde_json::to_string(&probs).unwrap();
+    params.insert("probs_json".to_string(), ParamValue::Reference(probs_json));
+    params.insert("dim".to_string(), ParamValue::Number(probs.len() as f64));
+
+    Ok(PyDistribution {
+        dist_type: "Categorical".to_string(),
+        params,
+    })
+}
+
+/// Geometric distribution
+///
+/// Models the number of failures before the first success.
+///
+/// Args:
+///     p: Success probability (0 < p <= 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Geometric(0.3)
+#[pyfunction]
+#[pyo3(signature = (p))]
+pub fn geometric(p: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("p".to_string(), ParamValue::Number(p));
+    PyDistribution {
+        dist_type: "Geometric".to_string(),
+        params,
+    }
+}
+
+/// Discrete Uniform distribution
+///
+/// Equal probability for each integer in [low, high].
+///
+/// Args:
+///     low: Lower bound (integer)
+///     high: Upper bound (integer)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> DiscreteUniform(1, 6)  # Fair die
+#[pyfunction]
+#[pyo3(signature = (low, high))]
+pub fn discrete_uniform(low: f64, high: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("low".to_string(), ParamValue::Number(low));
+    params.insert("high".to_string(), ParamValue::Number(high));
+    PyDistribution {
+        dist_type: "DiscreteUniform".to_string(),
+        params,
+    }
+}
+
+/// Beta-Binomial distribution
+///
+/// Compound distribution: Binomial with Beta-distributed success probability.
+/// Models overdispersed binomial data.
+///
+/// Args:
+///     n: Number of trials (positive integer)
+///     alpha: First Beta shape parameter (positive)
+///     beta: Second Beta shape parameter (positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> BetaBinomial(10, 2, 3)
+#[pyfunction]
+#[pyo3(signature = (n, alpha, beta))]
+pub fn beta_binomial(n: f64, alpha: f64, beta: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("n".to_string(), ParamValue::Number(n));
+    params.insert("alpha".to_string(), ParamValue::Number(alpha));
+    params.insert("beta".to_string(), ParamValue::Number(beta));
+    PyDistribution {
+        dist_type: "BetaBinomial".to_string(),
+        params,
+    }
+}

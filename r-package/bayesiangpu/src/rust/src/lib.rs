@@ -492,6 +492,51 @@ fn half_student_t_dist(df: f64, scale: f64) -> String {
         .to_string()
 }
 
+/// Create a Negative Binomial distribution specification
+/// @export
+#[extendr]
+fn negative_binomial_dist(r: f64, p: f64) -> String {
+    serde_json::json!({"dist_type": "NegativeBinomial", "params": {"r": r, "p": p}}).to_string()
+}
+
+/// Create a Categorical distribution specification
+/// @export
+#[extendr]
+fn categorical_dist(probs: Robj) -> String {
+    let probs_vec: Vec<f64> = if let Some(r) = probs.as_real_vector() {
+        r
+    } else {
+        vec![]
+    };
+    if probs_vec.len() < 2 {
+        panic!("Categorical requires at least 2 categories");
+    }
+    serde_json::json!({"dist_type": "Categorical", "params": {"probs": probs_vec}}).to_string()
+}
+
+/// Create a Geometric distribution specification
+/// @export
+#[extendr]
+fn geometric_dist(p: f64) -> String {
+    serde_json::json!({"dist_type": "Geometric", "params": {"p": p}}).to_string()
+}
+
+/// Create a Discrete Uniform distribution specification
+/// @export
+#[extendr]
+fn discrete_uniform_dist(low: f64, high: f64) -> String {
+    serde_json::json!({"dist_type": "DiscreteUniform", "params": {"low": low, "high": high}})
+        .to_string()
+}
+
+/// Create a Beta-Binomial distribution specification
+/// @export
+#[extendr]
+fn beta_binomial_dist(n: f64, alpha: f64, beta: f64) -> String {
+    serde_json::json!({"dist_type": "BetaBinomial", "params": {"n": n, "alpha": alpha, "beta": beta}})
+        .to_string()
+}
+
 /// Helper function to parse a matrix from R (matrix or list of lists)
 fn parse_matrix(obj: &Robj) -> Vec<Vec<f64>> {
     // Try as a matrix first
@@ -1166,6 +1211,11 @@ extendr_module! {
     fn pareto_dist;
     fn gumbel_dist;
     fn half_student_t_dist;
+    fn negative_binomial_dist;
+    fn categorical_dist;
+    fn geometric_dist;
+    fn discrete_uniform_dist;
+    fn beta_binomial_dist;
     fn run_nuts_sampling;
     fn run_advi;
 }

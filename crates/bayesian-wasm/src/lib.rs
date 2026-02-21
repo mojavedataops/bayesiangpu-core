@@ -574,6 +574,54 @@ impl DynamicModel {
                     .mul_scalar(-((df + 1.0) / 2.0))
                     .add_scalar(log_norm)
             }
+            "NegativeBinomial" => {
+                // log f(k) = ln_gamma(k+r) - ln_gamma(k+1) - ln_gamma(r) + r*ln(p) + k*ln(1-p)
+                let r_param = self.get_param_f64(&spec.params, "r", 1.0);
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                // value is the observation cast to float
+                let k_val = value.clone().into_scalar() as f64;
+                let log_prob =
+                    ln_gamma(k_val + r_param) - ln_gamma(k_val + 1.0) - ln_gamma(r_param)
+                        + r_param * p.ln()
+                        + k_val * (1.0 - p).ln();
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "Categorical" => {
+                // Categorical is only meaningful as a likelihood; return improper uniform
+                Tensor::<WasmBackend, 1>::zeros([1], &self.device)
+            }
+            "Geometric" => {
+                // log f(k) = ln(p) + k*ln(1-p)
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                let k_val = value.clone().into_scalar() as f64;
+                let log_prob = p.ln() + k_val * (1.0 - p).ln();
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "DiscreteUniform" => {
+                // log f(k) = -ln(high - low + 1)
+                let low = self.get_param_f64(&spec.params, "low", 0.0);
+                let high = self.get_param_f64(&spec.params, "high", 10.0);
+                let log_prob = -(high - low + 1.0).ln();
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "BetaBinomial" => {
+                // log f(k) = ln_gamma(n+1) - ln_gamma(k+1) - ln_gamma(n-k+1)
+                //          + ln_gamma(alpha+k) + ln_gamma(beta+n-k) - ln_gamma(alpha+beta+n)
+                //          - ln_gamma(alpha) - ln_gamma(beta) + ln_gamma(alpha+beta)
+                let n = self.get_param_f64(&spec.params, "n", 10.0);
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0);
+                let beta_param = self.get_param_f64(&spec.params, "beta", 1.0);
+                let k_val = value.clone().into_scalar() as f64;
+                let log_prob =
+                    ln_gamma(n + 1.0) - ln_gamma(k_val + 1.0) - ln_gamma(n - k_val + 1.0)
+                        + ln_gamma(alpha + k_val)
+                        + ln_gamma(beta_param + n - k_val)
+                        - ln_gamma(alpha + beta_param + n)
+                        - ln_gamma(alpha)
+                        - ln_gamma(beta_param)
+                        + ln_gamma(alpha + beta_param);
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
             _ => {
                 // Unknown distribution, return 0
                 Tensor::<WasmBackend, 1>::zeros([1], &self.device)
@@ -767,7 +815,8 @@ impl DynamicModel {
             "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta"
             | "InverseGamma" | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial"
             | "Poisson" | "Laplace" | "Logistic" | "ChiSquared" | "TruncatedNormal" | "Weibull"
-            | "Pareto" | "Gumbel" | "HalfStudentT" => true,
+            | "Pareto" | "Gumbel" | "HalfStudentT" | "NegativeBinomial" | "Categorical"
+            | "Geometric" | "DiscreteUniform" | "BetaBinomial" => true,
             _ => false,
         }
     }
@@ -1027,6 +1076,44 @@ impl DynamicModel {
                 // d/dx = -(df+1)*x / (scale^2*df + x^2)
                 let grad = (-(df + 1.0) * x / (scale * scale * df + x * x)) as f64;
                 (log_prob, grad)
+            }
+            "NegativeBinomial" => {
+                let r_param = self.get_param_f64(&spec.params, "r", 1.0);
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                let k = value as f64;
+                let log_prob = ln_gamma(k + r_param) - ln_gamma(k + 1.0) - ln_gamma(r_param)
+                    + r_param * p.ln()
+                    + k * (1.0 - p).ln();
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "Categorical" => {
+                (0.0, 0.0) // Not meaningful as prior
+            }
+            "Geometric" => {
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                let k = value as f64;
+                let log_prob = p.ln() + k * (1.0 - p).ln();
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "DiscreteUniform" => {
+                let low = self.get_param_f64(&spec.params, "low", 0.0);
+                let high = self.get_param_f64(&spec.params, "high", 10.0);
+                let log_prob = -(high - low + 1.0).ln();
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "BetaBinomial" => {
+                let n = self.get_param_f64(&spec.params, "n", 10.0);
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0);
+                let beta_param = self.get_param_f64(&spec.params, "beta", 1.0);
+                let k = value as f64;
+                let log_prob = ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0)
+                    + ln_gamma(alpha + k)
+                    + ln_gamma(beta_param + n - k)
+                    - ln_gamma(alpha + beta_param + n)
+                    - ln_gamma(alpha)
+                    - ln_gamma(beta_param)
+                    + ln_gamma(alpha + beta_param);
+                (log_prob, 0.0) // Discrete: gradient is 0
             }
             _ => (0.0, 0.0),
         }
@@ -1330,6 +1417,11 @@ fn generate_inits(
                         // Clamp to (low, high) range
                         loc.clamp(low + 0.01, high - 0.01)
                             + 0.01 * (chain_idx as f32 - num_chains as f32 / 2.0)
+                    }
+                    "NegativeBinomial" | "Geometric" | "DiscreteUniform" | "BetaBinomial"
+                    | "Categorical" => {
+                        // Discrete distributions: initialize at 0 or 1
+                        1.0 + 0.1 * chain_idx as f32
                     }
                     _ => {
                         // Normal and others: small perturbation around 0
