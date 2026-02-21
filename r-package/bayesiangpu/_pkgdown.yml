@@ -38,6 +38,10 @@ reference:
       - Geometric
       - DiscreteUniform
       - BetaBinomial
+      - ZeroInflatedPoisson
+      - ZeroInflatedNegativeBinomial
+      - Hypergeometric
+      - OrderedLogistic
       - Pareto
       - Laplace
       - Logistic

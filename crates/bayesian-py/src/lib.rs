@@ -77,6 +77,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(geometric, m)?)?;
     m.add_function(wrap_pyfunction!(discrete_uniform, m)?)?;
     m.add_function(wrap_pyfunction!(beta_binomial, m)?)?;
+    m.add_function(wrap_pyfunction!(zero_inflated_poisson, m)?)?;
+    m.add_function(wrap_pyfunction!(zero_inflated_neg_binomial, m)?)?;
+    m.add_function(wrap_pyfunction!(hypergeometric, m)?)?;
+    m.add_function(wrap_pyfunction!(ordered_logistic, m)?)?;
 
     // Sampling functions
     m.add_function(wrap_pyfunction!(sample, m)?)?;

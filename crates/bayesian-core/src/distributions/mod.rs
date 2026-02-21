@@ -18,6 +18,7 @@ pub mod gumbel;
 pub mod half_cauchy;
 pub mod half_normal;
 pub mod half_student_t;
+pub mod hypergeometric;
 pub mod inverse_gamma;
 pub mod laplace;
 pub mod log_normal;
@@ -26,12 +27,15 @@ pub mod multinomial;
 pub mod multivariate_normal;
 pub mod negative_binomial;
 pub mod normal;
+pub mod ordered_logistic;
 pub mod pareto;
 pub mod stick_breaking;
 pub mod student_t;
 pub mod truncated_normal;
 pub mod uniform;
 pub mod weibull;
+pub mod zero_inflated_neg_binomial;
+pub mod zero_inflated_poisson;
 
 // Re-export distribution types
 pub use beta::Beta;
@@ -49,6 +53,7 @@ pub use gumbel::Gumbel;
 pub use half_cauchy::HalfCauchy;
 pub use half_normal::HalfNormal;
 pub use half_student_t::HalfStudentT;
+pub use hypergeometric::Hypergeometric;
 pub use inverse_gamma::InverseGamma;
 pub use laplace::Laplace;
 pub use log_normal::LogNormal;
@@ -57,12 +62,15 @@ pub use multinomial::{log_multinomial_coefficient, Multinomial};
 pub use multivariate_normal::{mvn_from_covariance, mvn_from_precision, MultivariateNormal};
 pub use negative_binomial::NegativeBinomial;
 pub use normal::Normal;
+pub use ordered_logistic::OrderedLogistic;
 pub use pareto::Pareto;
 pub use stick_breaking::{StickBreaking, GEM};
 pub use student_t::StudentT;
 pub use truncated_normal::TruncatedNormal;
 pub use uniform::Uniform;
 pub use weibull::Weibull;
+pub use zero_inflated_neg_binomial::ZeroInflatedNegativeBinomial;
+pub use zero_inflated_poisson::ZeroInflatedPoisson;
 
 use burn::prelude::*;
 

@@ -554,6 +554,80 @@ BetaBinomial <- function(n, alpha, beta) {
   structure(result, class = c("bg_distribution", "character"))
 }
 
+#' Zero-Inflated Poisson Distribution
+#'
+#' Create a Zero-Inflated Poisson distribution. Models count data with
+#' excess zeros from a separate zero-generating process.
+#'
+#' @param rate Rate parameter (lambda > 0)
+#' @param zero_prob Probability of structural zero (0 <= pi < 1)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' ZeroInflatedPoisson(3.0, 0.2)  # rate=3, 20% structural zeros
+#' }
+ZeroInflatedPoisson <- function(rate, zero_prob) {
+  result <- zero_inflated_poisson_dist(rate, zero_prob)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Zero-Inflated Negative Binomial Distribution
+#'
+#' Create a Zero-Inflated Negative Binomial distribution. Models
+#' overdispersed count data with excess zeros.
+#'
+#' @param r Number of successes (r > 0)
+#' @param p Success probability (0 < p < 1)
+#' @param zero_prob Probability of structural zero (0 <= pi < 1)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' ZeroInflatedNegativeBinomial(5, 0.3, 0.2)  # r=5, p=0.3, 20% structural zeros
+#' }
+ZeroInflatedNegativeBinomial <- function(r, p, zero_prob) {
+  result <- zero_inflated_neg_binomial_dist(r, p, zero_prob)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Hypergeometric Distribution
+#'
+#' Create a Hypergeometric distribution. Models the number of successes
+#' in draws without replacement from a finite population.
+#'
+#' @param big_n Population size
+#' @param big_k Number of success states in population
+#' @param n Number of draws
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Hypergeometric(50, 25, 10)  # N=50, K=25, n=10
+#' }
+Hypergeometric <- function(big_n, big_k, n) {
+  result <- hypergeometric_dist(big_n, big_k, n)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Ordered Logistic Distribution
+#'
+#' Create an Ordered Logistic (proportional odds) distribution.
+#' Models ordinal response data with ordered categories.
+#'
+#' @param eta Linear predictor
+#' @param cutpoints Ordered vector of cutpoints
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' OrderedLogistic(0, c(-1, 0, 1))  # 4 categories with cutpoints at -1, 0, 1
+#' }
+OrderedLogistic <- function(eta, cutpoints) {
+  result <- ordered_logistic_dist(eta, cutpoints)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
 #' @export
 print.bg_distribution <- function(x, ...) {
   dist <- jsonlite::fromJSON(x)

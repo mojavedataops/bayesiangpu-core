@@ -899,3 +899,117 @@ pub fn beta_binomial(n: f64, alpha: f64, beta: f64) -> PyDistribution {
         params,
     }
 }
+
+/// Zero-Inflated Poisson distribution
+///
+/// Models count data with excess zeros.
+///
+/// Args:
+///     rate: Poisson rate parameter (lambda > 0)
+///     zero_prob: Probability of structural zero (0 <= pi < 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> ZeroInflatedPoisson(3.0, 0.3)
+#[pyfunction]
+#[pyo3(signature = (rate, zero_prob))]
+pub fn zero_inflated_poisson(rate: f64, zero_prob: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("rate".to_string(), ParamValue::Number(rate));
+    params.insert("zero_prob".to_string(), ParamValue::Number(zero_prob));
+    PyDistribution {
+        dist_type: "ZeroInflatedPoisson".to_string(),
+        params,
+    }
+}
+
+/// Zero-Inflated Negative Binomial distribution
+///
+/// Models overdispersed count data with excess zeros.
+///
+/// Args:
+///     r: Number of successes (positive)
+///     p: Success probability (0 < p < 1)
+///     zero_prob: Probability of structural zero (0 <= pi < 1)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> ZeroInflatedNegativeBinomial(5, 0.5, 0.3)
+#[pyfunction]
+#[pyo3(signature = (r, p, zero_prob))]
+pub fn zero_inflated_neg_binomial(r: f64, p: f64, zero_prob: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("r".to_string(), ParamValue::Number(r));
+    params.insert("p".to_string(), ParamValue::Number(p));
+    params.insert("zero_prob".to_string(), ParamValue::Number(zero_prob));
+    PyDistribution {
+        dist_type: "ZeroInflatedNegativeBinomial".to_string(),
+        params,
+    }
+}
+
+/// Hypergeometric distribution
+///
+/// Models the number of successes in draws from a finite population
+/// without replacement.
+///
+/// Args:
+///     big_n: Population size (N >= 0)
+///     big_k: Number of success states in population (0 <= K <= N)
+///     n: Number of draws (0 <= n <= N)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Hypergeometric(52, 13, 5)  # Drawing from deck of cards
+#[pyfunction]
+#[pyo3(signature = (big_n, big_k, n))]
+pub fn hypergeometric(big_n: f64, big_k: f64, n: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("big_n".to_string(), ParamValue::Number(big_n));
+    params.insert("big_k".to_string(), ParamValue::Number(big_k));
+    params.insert("n".to_string(), ParamValue::Number(n));
+    PyDistribution {
+        dist_type: "Hypergeometric".to_string(),
+        params,
+    }
+}
+
+/// Ordered Logistic distribution
+///
+/// Models ordinal outcomes with K categories defined by K-1 cutpoints.
+/// Used in ordinal regression models.
+///
+/// Args:
+///     eta: Linear predictor (scalar)
+///     cutpoints: Ordered vector of K-1 thresholds
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> OrderedLogistic(0.5, [-1.0, 0.0, 1.0])
+#[pyfunction]
+#[pyo3(signature = (eta, cutpoints))]
+pub fn ordered_logistic(eta: f64, cutpoints: Vec<f64>) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("eta".to_string(), ParamValue::Number(eta));
+    let cutpoints_json = serde_json::to_string(&cutpoints).unwrap();
+    params.insert(
+        "cutpoints_json".to_string(),
+        ParamValue::Reference(cutpoints_json),
+    );
+    params.insert(
+        "k".to_string(),
+        ParamValue::Number((cutpoints.len() + 1) as f64),
+    );
+    PyDistribution {
+        dist_type: "OrderedLogistic".to_string(),
+        params,
+    }
+}

@@ -430,6 +430,68 @@ impl DynamicModel {
                 let logp = ln_choose + ln_beta_post - ln_beta_prior;
                 self.scalar_tensor(logp)
             }
+            "ZeroInflatedPoisson" => {
+                let rate = self.get_f64_param(&dist.params, "rate");
+                let zero_prob = self.get_f64_param(&dist.params, "zero_prob");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let logp = if k == 0.0 {
+                    (zero_prob + (1.0 - zero_prob) * (-rate).exp()).ln()
+                } else {
+                    (1.0 - zero_prob).ln() + k * rate.ln() - rate - ln_gamma(k + 1.0)
+                };
+                self.scalar_tensor(logp)
+            }
+            "ZeroInflatedNegativeBinomial" => {
+                let r = self.get_f64_param(&dist.params, "r");
+                let p = self.get_f64_param(&dist.params, "p");
+                let zero_prob = self.get_f64_param(&dist.params, "zero_prob");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let logp = if k == 0.0 {
+                    (zero_prob + (1.0 - zero_prob) * p.powf(r)).ln()
+                } else {
+                    (1.0 - zero_prob).ln() + ln_gamma(k + r) - ln_gamma(k + 1.0) - ln_gamma(r)
+                        + r * p.ln()
+                        + k * (1.0 - p).ln()
+                };
+                self.scalar_tensor(logp)
+            }
+            "Hypergeometric" => {
+                let big_n = self.get_f64_param(&dist.params, "big_n");
+                let big_k = self.get_f64_param(&dist.params, "big_k");
+                let n = self.get_f64_param(&dist.params, "n");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                let ln_choose = |a: f64, b: f64| -> f64 {
+                    ln_gamma(a + 1.0) - ln_gamma(b + 1.0) - ln_gamma(a - b + 1.0)
+                };
+                let logp =
+                    ln_choose(big_k, k) + ln_choose(big_n - big_k, n - k) - ln_choose(big_n, n);
+                self.scalar_tensor(logp)
+            }
+            "OrderedLogistic" => {
+                let eta = self.get_f64_param(&dist.params, "eta");
+                let cutpoints_str = match dist.params.get("cutpoints_json") {
+                    Some(ParamValue::Reference(s)) => s.clone(),
+                    _ => "[]".to_string(),
+                };
+                let cutpoints: Vec<f64> = serde_json::from_str(&cutpoints_str).unwrap_or_default();
+                let num_cat = cutpoints.len() + 1;
+                let v: f32 = value.clone().into_scalar().elem();
+                let j = v.round() as usize;
+
+                let sigmoid_f = |x: f64| -> f64 { 1.0 / (1.0 + (-x).exp()) };
+                let prob = if j == 0 {
+                    sigmoid_f(cutpoints[0] - eta)
+                } else if j >= num_cat - 1 {
+                    1.0 - sigmoid_f(cutpoints[num_cat - 2] - eta)
+                } else {
+                    sigmoid_f(cutpoints[j] - eta) - sigmoid_f(cutpoints[j - 1] - eta)
+                };
+                let logp = prob.max(1e-20).ln();
+                self.scalar_tensor(logp)
+            }
             "Categorical" => {
                 // Categorical as prior: return 0 (improper uniform) as fallback
                 Tensor::<PyBackend, 1>::zeros([1], &self.device)
@@ -594,8 +656,15 @@ impl DynamicModel {
                 Support::Positive
             }
             "Beta" | "Uniform" => Support::UnitInterval,
-            "NegativeBinomial" | "Categorical" | "Geometric" | "DiscreteUniform"
-            | "BetaBinomial" => Support::Real,
+            "NegativeBinomial"
+            | "Categorical"
+            | "Geometric"
+            | "DiscreteUniform"
+            | "BetaBinomial"
+            | "ZeroInflatedPoisson"
+            | "ZeroInflatedNegativeBinomial"
+            | "Hypergeometric"
+            | "OrderedLogistic" => Support::Real,
             _ => Support::Real,
         }
     }

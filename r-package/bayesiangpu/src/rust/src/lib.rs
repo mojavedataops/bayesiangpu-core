@@ -537,6 +537,47 @@ fn beta_binomial_dist(n: f64, alpha: f64, beta: f64) -> String {
         .to_string()
 }
 
+/// Create a Zero-Inflated Poisson distribution specification
+/// @export
+#[extendr]
+fn zero_inflated_poisson_dist(rate: f64, zero_prob: f64) -> String {
+    serde_json::json!({"dist_type": "ZeroInflatedPoisson", "params": {"rate": rate, "zero_prob": zero_prob}})
+        .to_string()
+}
+
+/// Create a Zero-Inflated Negative Binomial distribution specification
+/// @export
+#[extendr]
+fn zero_inflated_neg_binomial_dist(r: f64, p: f64, zero_prob: f64) -> String {
+    serde_json::json!({"dist_type": "ZeroInflatedNegativeBinomial", "params": {"r": r, "p": p, "zero_prob": zero_prob}})
+        .to_string()
+}
+
+/// Create a Hypergeometric distribution specification
+/// @export
+#[extendr]
+fn hypergeometric_dist(big_n: f64, big_k: f64, n: f64) -> String {
+    serde_json::json!({"dist_type": "Hypergeometric", "params": {"big_n": big_n, "big_k": big_k, "n": n}})
+        .to_string()
+}
+
+/// Create an Ordered Logistic distribution specification
+///
+/// @param eta Linear predictor
+/// @param cutpoints Ordered vector of cutpoints (numeric vector)
+/// @return JSON string with distribution specification
+/// @export
+#[extendr]
+fn ordered_logistic_dist(eta: f64, cutpoints: Robj) -> String {
+    let cutpoints_vec: Vec<f64> = if let Some(r) = cutpoints.as_real_vector() {
+        r
+    } else {
+        vec![]
+    };
+    serde_json::json!({"dist_type": "OrderedLogistic", "params": {"eta": eta, "cutpoints": cutpoints_vec}})
+        .to_string()
+}
+
 /// Helper function to parse a matrix from R (matrix or list of lists)
 fn parse_matrix(obj: &Robj) -> Vec<Vec<f64>> {
     // Try as a matrix first
@@ -1216,6 +1257,10 @@ extendr_module! {
     fn geometric_dist;
     fn discrete_uniform_dist;
     fn beta_binomial_dist;
+    fn zero_inflated_poisson_dist;
+    fn zero_inflated_neg_binomial_dist;
+    fn hypergeometric_dist;
+    fn ordered_logistic_dist;
     fn run_nuts_sampling;
     fn run_advi;
 }

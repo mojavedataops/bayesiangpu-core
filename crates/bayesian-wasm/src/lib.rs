@@ -622,6 +622,90 @@ impl DynamicModel {
                         + ln_gamma(alpha + beta_param);
                 Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
             }
+            "ZeroInflatedPoisson" => {
+                // ZI-Poisson: pi = zero_prob, rate = rate
+                // k==0: log(pi + (1-pi)*exp(-rate))
+                // k>0:  log(1-pi) + k*log(rate) - rate - ln_gamma(k+1)
+                let rate = self.get_param_f64(&spec.params, "rate", 1.0);
+                let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
+                let k_val = value.clone().into_scalar() as f64;
+                let log_prob = if k_val == 0.0 {
+                    (pi + (1.0 - pi) * (-rate).exp()).ln()
+                } else {
+                    (1.0 - pi).ln() + k_val * rate.ln() - rate - ln_gamma(k_val + 1.0)
+                };
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "ZeroInflatedNegativeBinomial" => {
+                // ZI-NegBin: pi = zero_prob, r = r, p = p
+                // k==0: log(pi + (1-pi)*p^r)
+                // k>0:  log(1-pi) + ln_gamma(k+r) - ln_gamma(k+1) - ln_gamma(r) + r*log(p) + k*log(1-p)
+                let r_param = self.get_param_f64(&spec.params, "r", 1.0);
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
+                let k_val = value.clone().into_scalar() as f64;
+                let log_prob = if k_val == 0.0 {
+                    (pi + (1.0 - pi) * p.powf(r_param)).ln()
+                } else {
+                    (1.0 - pi).ln() + ln_gamma(k_val + r_param)
+                        - ln_gamma(k_val + 1.0)
+                        - ln_gamma(r_param)
+                        + r_param * p.ln()
+                        + k_val * (1.0 - p).ln()
+                };
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "Hypergeometric" => {
+                // ln_choose(K,k) + ln_choose(N-K, n-k) - ln_choose(N, n)
+                // where ln_choose(a,b) = ln_gamma(a+1) - ln_gamma(b+1) - ln_gamma(a-b+1)
+                let big_n = self.get_param_f64(&spec.params, "big_n", 50.0);
+                let big_k = self.get_param_f64(&spec.params, "big_k", 25.0);
+                let n = self.get_param_f64(&spec.params, "n", 10.0);
+                let k_val = value.clone().into_scalar() as f64;
+                fn ln_choose(a: f64, b: f64) -> f64 {
+                    ln_gamma(a + 1.0) - ln_gamma(b + 1.0) - ln_gamma(a - b + 1.0)
+                }
+                let log_prob = ln_choose(big_k, k_val) + ln_choose(big_n - big_k, n - k_val)
+                    - ln_choose(big_n, n);
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
+            "OrderedLogistic" => {
+                // Ordered logistic: P(Y=j | eta, c) from cumulative logistic
+                // cutpoints stored as JSON array in "cutpoints" param
+                let eta = self.get_param_f64(&spec.params, "eta", 0.0);
+                let cutpoints: Vec<f64> = spec
+                    .params
+                    .get("cutpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let j = value.clone().into_scalar() as usize;
+                let n_cat = cutpoints.len() + 1;
+                // Compute cumulative probs: P(Y <= j) = sigmoid(c_j - eta)
+                let prob = if j == 0 {
+                    // P(Y=0) = sigmoid(c_0 - eta)
+                    if cutpoints.is_empty() {
+                        1.0 / n_cat as f64
+                    } else {
+                        1.0 / (1.0 + (-(cutpoints[0] - eta)).exp())
+                    }
+                } else if j >= n_cat - 1 {
+                    // P(Y=K) = 1 - sigmoid(c_{K-1} - eta)
+                    if cutpoints.is_empty() {
+                        1.0 / n_cat as f64
+                    } else {
+                        let cum_prev =
+                            1.0 / (1.0 + (-(cutpoints[cutpoints.len() - 1] - eta)).exp());
+                        1.0 - cum_prev
+                    }
+                } else {
+                    // P(Y=j) = sigmoid(c_j - eta) - sigmoid(c_{j-1} - eta)
+                    let cum_j = 1.0 / (1.0 + (-(cutpoints[j] - eta)).exp());
+                    let cum_j_minus_1 = 1.0 / (1.0 + (-(cutpoints[j - 1] - eta)).exp());
+                    cum_j - cum_j_minus_1
+                };
+                let log_prob = prob.max(1e-20).ln();
+                Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
+            }
             _ => {
                 // Unknown distribution, return 0
                 Tensor::<WasmBackend, 1>::zeros([1], &self.device)
@@ -812,11 +896,36 @@ impl DynamicModel {
 
         // Check if the likelihood distribution has a GPU kernel
         match self.likelihood.distribution.dist_type.as_str() {
-            "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta"
-            | "InverseGamma" | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial"
-            | "Poisson" | "Laplace" | "Logistic" | "ChiSquared" | "TruncatedNormal" | "Weibull"
-            | "Pareto" | "Gumbel" | "HalfStudentT" | "NegativeBinomial" | "Categorical"
-            | "Geometric" | "DiscreteUniform" | "BetaBinomial" => true,
+            "Normal"
+            | "HalfNormal"
+            | "HalfCauchy"
+            | "Exponential"
+            | "Gamma"
+            | "Beta"
+            | "InverseGamma"
+            | "StudentT"
+            | "Cauchy"
+            | "LogNormal"
+            | "Bernoulli"
+            | "Binomial"
+            | "Poisson"
+            | "Laplace"
+            | "Logistic"
+            | "ChiSquared"
+            | "TruncatedNormal"
+            | "Weibull"
+            | "Pareto"
+            | "Gumbel"
+            | "HalfStudentT"
+            | "NegativeBinomial"
+            | "Categorical"
+            | "Geometric"
+            | "DiscreteUniform"
+            | "BetaBinomial"
+            | "ZeroInflatedPoisson"
+            | "ZeroInflatedNegativeBinomial"
+            | "Hypergeometric"
+            | "OrderedLogistic" => true,
             _ => false,
         }
     }
@@ -1113,6 +1222,74 @@ impl DynamicModel {
                     - ln_gamma(alpha)
                     - ln_gamma(beta_param)
                     + ln_gamma(alpha + beta_param);
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "ZeroInflatedPoisson" => {
+                let rate = self.get_param_f64(&spec.params, "rate", 1.0);
+                let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
+                let k = value as f64;
+                let log_prob = if k == 0.0 {
+                    (pi + (1.0 - pi) * (-rate).exp()).ln()
+                } else {
+                    (1.0 - pi).ln() + k * rate.ln() - rate - ln_gamma(k + 1.0)
+                };
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "ZeroInflatedNegativeBinomial" => {
+                let r_param = self.get_param_f64(&spec.params, "r", 1.0);
+                let p = self.get_param_f64(&spec.params, "p", 0.5);
+                let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
+                let k = value as f64;
+                let log_prob = if k == 0.0 {
+                    (pi + (1.0 - pi) * p.powf(r_param)).ln()
+                } else {
+                    (1.0 - pi).ln() + ln_gamma(k + r_param) - ln_gamma(k + 1.0) - ln_gamma(r_param)
+                        + r_param * p.ln()
+                        + k * (1.0 - p).ln()
+                };
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "Hypergeometric" => {
+                let big_n = self.get_param_f64(&spec.params, "big_n", 50.0);
+                let big_k = self.get_param_f64(&spec.params, "big_k", 25.0);
+                let n = self.get_param_f64(&spec.params, "n", 10.0);
+                let k = value as f64;
+                let ln_choose_val = |a: f64, b: f64| -> f64 {
+                    ln_gamma(a + 1.0) - ln_gamma(b + 1.0) - ln_gamma(a - b + 1.0)
+                };
+                let log_prob = ln_choose_val(big_k, k) + ln_choose_val(big_n - big_k, n - k)
+                    - ln_choose_val(big_n, n);
+                (log_prob, 0.0) // Discrete: gradient is 0
+            }
+            "OrderedLogistic" => {
+                let eta = self.get_param_f64(&spec.params, "eta", 0.0);
+                let cutpoints: Vec<f64> = spec
+                    .params
+                    .get("cutpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let j = value as usize;
+                let n_cat = cutpoints.len() + 1;
+                let prob = if j == 0 {
+                    if cutpoints.is_empty() {
+                        1.0 / n_cat as f64
+                    } else {
+                        1.0 / (1.0 + (-(cutpoints[0] - eta)).exp())
+                    }
+                } else if j >= n_cat - 1 {
+                    if cutpoints.is_empty() {
+                        1.0 / n_cat as f64
+                    } else {
+                        let cum_prev =
+                            1.0 / (1.0 + (-(cutpoints[cutpoints.len() - 1] - eta)).exp());
+                        1.0 - cum_prev
+                    }
+                } else {
+                    let cum_j = 1.0 / (1.0 + (-(cutpoints[j] - eta)).exp());
+                    let cum_j_minus_1 = 1.0 / (1.0 + (-(cutpoints[j - 1] - eta)).exp());
+                    cum_j - cum_j_minus_1
+                };
+                let log_prob = prob.max(1e-20).ln();
                 (log_prob, 0.0) // Discrete: gradient is 0
             }
             _ => (0.0, 0.0),
@@ -1418,8 +1595,15 @@ fn generate_inits(
                         loc.clamp(low + 0.01, high - 0.01)
                             + 0.01 * (chain_idx as f32 - num_chains as f32 / 2.0)
                     }
-                    "NegativeBinomial" | "Geometric" | "DiscreteUniform" | "BetaBinomial"
-                    | "Categorical" => {
+                    "NegativeBinomial"
+                    | "Geometric"
+                    | "DiscreteUniform"
+                    | "BetaBinomial"
+                    | "Categorical"
+                    | "ZeroInflatedPoisson"
+                    | "ZeroInflatedNegativeBinomial"
+                    | "Hypergeometric"
+                    | "OrderedLogistic" => {
                         // Discrete distributions: initialize at 0 or 1
                         1.0 + 0.1 * chain_idx as f32
                     }
