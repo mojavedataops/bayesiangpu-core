@@ -5,12 +5,16 @@
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/index.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Bernoulli.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Beta.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/BetaBinomial.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Binomial.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Categorical.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Cauchy.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/ChiSquared.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Dirichlet.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/DiscreteUniform.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Exponential.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Gamma.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Geometric.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Gumbel.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfCauchy.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfNormal.html</loc></url>
@@ -23,6 +27,7 @@
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Model.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Multinomial.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/MultivariateNormal.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/NegativeBinomial.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Normal.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Poisson.html</loc></url>

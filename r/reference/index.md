@@ -38,6 +38,16 @@
   : Dirichlet Distribution
 - [`Multinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Multinomial.md)
   : Multinomial Distribution
+- [`NegativeBinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/NegativeBinomial.md)
+  : Negative Binomial Distribution
+- [`Categorical()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Categorical.md)
+  : Categorical Distribution
+- [`Geometric()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Geometric.md)
+  : Geometric Distribution
+- [`DiscreteUniform()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/DiscreteUniform.md)
+  : Discrete Uniform Distribution
+- [`BetaBinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/BetaBinomial.md)
+  : Beta-Binomial Distribution
 - [`Pareto()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.md)
   : Pareto Distribution
 - [`Laplace()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.md)
