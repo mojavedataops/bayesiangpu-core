@@ -19,6 +19,7 @@
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfCauchy.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfNormal.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/HalfStudentT.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Hypergeometric.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/InferenceResult.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/InverseGamma.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.html</loc></url>
@@ -29,12 +30,15 @@
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/MultivariateNormal.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/NegativeBinomial.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Normal.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/OrderedLogistic.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Poisson.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/StudentT.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/TruncatedNormal.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Uniform.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/Weibull.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/ZeroInflatedNegativeBinomial.html</loc></url>
+<url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/ZeroInflatedPoisson.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/as.data.frame.InferenceResult.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/bg_sample.html</loc></url>
 <url><loc>https://mojavedataops.github.io/bayesiangpu-core/r/reference/index.html</loc></url>

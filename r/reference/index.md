@@ -48,6 +48,14 @@
   : Discrete Uniform Distribution
 - [`BetaBinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/BetaBinomial.md)
   : Beta-Binomial Distribution
+- [`ZeroInflatedPoisson()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/ZeroInflatedPoisson.md)
+  : Zero-Inflated Poisson Distribution
+- [`ZeroInflatedNegativeBinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/ZeroInflatedNegativeBinomial.md)
+  : Zero-Inflated Negative Binomial Distribution
+- [`Hypergeometric()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Hypergeometric.md)
+  : Hypergeometric Distribution
+- [`OrderedLogistic()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/OrderedLogistic.md)
+  : Ordered Logistic Distribution
 - [`Pareto()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.md)
   : Pareto Distribution
 - [`Laplace()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.md)
