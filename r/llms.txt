@@ -128,6 +128,16 @@ MIT
   : Dirichlet Distribution
 - [`Multinomial()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Multinomial.md)
   : Multinomial Distribution
+- [`Laplace()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.md)
+  : Laplace Distribution
+- [`Logistic()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Logistic.md)
+  : Logistic Distribution
+- [`InverseGamma()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/InverseGamma.md)
+  : Inverse Gamma Distribution
+- [`ChiSquared()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/ChiSquared.md)
+  : Chi-Squared Distribution
+- [`TruncatedNormal()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/TruncatedNormal.md)
+  : Truncated Normal Distribution
 - [`print(`*`<bg_distribution>`*`)`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/print.bg_distribution.md)
   : Print a BayesianGPU Distribution
 
