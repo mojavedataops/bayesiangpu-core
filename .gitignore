@@ -34,6 +34,13 @@ Thumbs.db
 .env
 .env.local
 
+# R
+*.Rcheck/
+*.tar.gz
+src/*.o
+src/*.so
+src/rust/target/
+
 # Coverage
 .coverage
 *.coverage
