@@ -10,8 +10,10 @@ pub mod dirichlet;
 pub mod dirichlet_multinomial;
 pub mod exponential;
 pub mod gamma;
+pub mod gumbel;
 pub mod half_cauchy;
 pub mod half_normal;
+pub mod half_student_t;
 pub mod inverse_gamma;
 pub mod laplace;
 pub mod log_normal;
@@ -19,10 +21,12 @@ pub mod logistic;
 pub mod multinomial;
 pub mod multivariate_normal;
 pub mod normal;
+pub mod pareto;
 pub mod stick_breaking;
 pub mod student_t;
 pub mod truncated_normal;
 pub mod uniform;
+pub mod weibull;
 
 // Re-export distribution types
 pub use beta::Beta;
@@ -32,8 +36,10 @@ pub use dirichlet::Dirichlet;
 pub use dirichlet_multinomial::DirichletMultinomial;
 pub use exponential::Exponential;
 pub use gamma::Gamma;
+pub use gumbel::Gumbel;
 pub use half_cauchy::HalfCauchy;
 pub use half_normal::HalfNormal;
+pub use half_student_t::HalfStudentT;
 pub use inverse_gamma::InverseGamma;
 pub use laplace::Laplace;
 pub use log_normal::LogNormal;
@@ -41,10 +47,12 @@ pub use logistic::Logistic;
 pub use multinomial::{log_multinomial_coefficient, Multinomial};
 pub use multivariate_normal::{mvn_from_covariance, mvn_from_precision, MultivariateNormal};
 pub use normal::Normal;
+pub use pareto::Pareto;
 pub use stick_breaking::{StickBreaking, GEM};
 pub use student_t::StudentT;
 pub use truncated_normal::TruncatedNormal;
 pub use uniform::Uniform;
+pub use weibull::Weibull;
 
 use burn::prelude::*;
 

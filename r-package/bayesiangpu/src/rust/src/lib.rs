@@ -460,6 +460,38 @@ fn truncated_normal_dist(loc: f64, scale: f64, low: f64, high: f64) -> String {
     serde_json::to_string(&dist).unwrap()
 }
 
+/// Create a Weibull distribution specification
+/// @export
+#[extendr]
+fn weibull_dist(shape: f64, scale: f64) -> String {
+    serde_json::json!({"dist_type": "Weibull", "params": {"shape": shape, "scale": scale}})
+        .to_string()
+}
+
+/// Create a Pareto distribution specification
+/// @export
+#[extendr]
+fn pareto_dist(alpha: f64, x_m: f64) -> String {
+    serde_json::json!({"dist_type": "Pareto", "params": {"alpha": alpha, "x_m": x_m}})
+        .to_string()
+}
+
+/// Create a Gumbel distribution specification
+/// @export
+#[extendr]
+fn gumbel_dist(loc: f64, scale: f64) -> String {
+    serde_json::json!({"dist_type": "Gumbel", "params": {"loc": loc, "scale": scale}})
+        .to_string()
+}
+
+/// Create a Half Student's t distribution specification
+/// @export
+#[extendr]
+fn half_student_t_dist(df: f64, scale: f64) -> String {
+    serde_json::json!({"dist_type": "HalfStudentT", "params": {"df": df, "scale": scale}})
+        .to_string()
+}
+
 /// Helper function to parse a matrix from R (matrix or list of lists)
 fn parse_matrix(obj: &Robj) -> Vec<Vec<f64>> {
     // Try as a matrix first
@@ -1130,6 +1162,10 @@ extendr_module! {
     fn inverse_gamma_dist;
     fn chi_squared_dist;
     fn truncated_normal_dist;
+    fn weibull_dist;
+    fn pareto_dist;
+    fn gumbel_dist;
+    fn half_student_t_dist;
     fn run_nuts_sampling;
     fn run_advi;
 }

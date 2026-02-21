@@ -386,6 +386,81 @@ TruncatedNormal <- function(loc, scale, low, high) {
   )
 }
 
+#' Weibull Distribution
+#'
+#' Create a Weibull distribution. Commonly used for survival analysis
+#' and reliability modeling.
+#'
+#' @param shape Shape parameter (k > 0)
+#' @param scale Scale parameter (lambda > 0)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Weibull(1.5, 1)  # Shape=1.5, scale=1
+#' }
+Weibull <- function(shape, scale) {
+  result <- weibull_dist(shape, scale)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Pareto Distribution
+#'
+#' Create a Pareto distribution. Used for modeling heavy-tailed phenomena
+#' such as wealth distribution and city sizes.
+#'
+#' @param alpha Shape parameter (alpha > 0)
+#' @param x_m Scale parameter / minimum value (x_m > 0)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Pareto(2, 1)  # alpha=2, x_m=1
+#' }
+Pareto <- function(alpha, x_m) {
+  result <- pareto_dist(alpha, x_m)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Gumbel Distribution
+#'
+#' Create a Gumbel distribution. Used for modeling extreme values
+#' (maximum or minimum of samples).
+#'
+#' @param loc Location parameter (default: 0)
+#' @param scale Scale parameter (default: 1, must be positive)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' Gumbel()       # Standard Gumbel
+#' Gumbel(0, 2)   # Wider Gumbel
+#' }
+Gumbel <- function(loc = 0, scale = 1) {
+  result <- gumbel_dist(loc, scale)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Half Student's t Distribution
+#'
+#' Create a Half Student's t distribution (positive values only).
+#' A robust alternative to HalfNormal for scale parameters,
+#' with heavier tails controlled by the degrees of freedom.
+#'
+#' @param df Degrees of freedom (df > 0)
+#' @param scale Scale parameter (default: 1, must be positive)
+#' @return A bg_distribution object
+#' @export
+#' @examples
+#' \dontrun{
+#' HalfStudentT(3)      # 3 df, scale=1
+#' HalfStudentT(5, 2)   # 5 df, scale=2
+#' }
+HalfStudentT <- function(df, scale = 1) {
+  result <- half_student_t_dist(df, scale)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
 #' @export
 print.bg_distribution <- function(x, ...) {
   dist <- jsonlite::fromJSON(x)

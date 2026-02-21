@@ -450,6 +450,106 @@ pub fn log_normal(loc: &Bound<'_, PyAny>, scale: &Bound<'_, PyAny>) -> PyResult<
     })
 }
 
+/// Weibull distribution
+///
+/// Commonly used in reliability engineering and survival analysis.
+///
+/// Args:
+///     shape: Shape parameter k (must be positive)
+///     scale: Scale parameter lambda (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Weibull(2, 1)  # Shape=2, scale=1
+#[pyfunction]
+#[pyo3(signature = (shape, scale))]
+pub fn weibull(shape: f64, scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("shape".to_string(), ParamValue::Number(shape));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "Weibull".to_string(),
+        params,
+    }
+}
+
+/// Pareto distribution
+///
+/// Heavy-tailed distribution for modeling power-law phenomena.
+///
+/// Args:
+///     alpha: Shape parameter (must be positive)
+///     x_m: Scale/minimum parameter (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Pareto(2, 1)  # Shape=2, minimum=1
+#[pyfunction]
+#[pyo3(signature = (alpha, x_m))]
+pub fn pareto(alpha: f64, x_m: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("alpha".to_string(), ParamValue::Number(alpha));
+    params.insert("x_m".to_string(), ParamValue::Number(x_m));
+    PyDistribution {
+        dist_type: "Pareto".to_string(),
+        params,
+    }
+}
+
+/// Gumbel distribution (Type-I extreme value)
+///
+/// Used for modeling the distribution of the maximum of samples.
+///
+/// Args:
+///     loc: Location parameter (default: 0)
+///     scale: Scale parameter (default: 1, must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> Gumbel(0, 1)  # Standard Gumbel
+#[pyfunction]
+#[pyo3(signature = (loc=0.0, scale=1.0))]
+pub fn gumbel(loc: f64, scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("loc".to_string(), ParamValue::Number(loc));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "Gumbel".to_string(),
+        params,
+    }
+}
+
+/// Half Student's t distribution (positive values only)
+///
+/// Heavy-tailed prior for scale parameters, more robust than HalfNormal.
+///
+/// Args:
+///     df: Degrees of freedom (must be positive)
+///     scale: Scale parameter (default: 1, must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> HalfStudentT(3, 1)  # 3 degrees of freedom
+#[pyfunction]
+#[pyo3(signature = (df, scale=1.0))]
+pub fn half_student_t(df: f64, scale: f64) -> PyDistribution {
+    let mut params = HashMap::new();
+    params.insert("df".to_string(), ParamValue::Number(df));
+    params.insert("scale".to_string(), ParamValue::Number(scale));
+    PyDistribution {
+        dist_type: "HalfStudentT".to_string(),
+        params,
+    }
+}
+
 // ============================================================================
 // Likelihood Distributions
 // ============================================================================

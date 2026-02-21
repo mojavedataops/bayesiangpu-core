@@ -58,6 +58,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chi_squared, m)?)?;
     m.add_function(wrap_pyfunction!(truncated_normal, m)?)?;
     m.add_function(wrap_pyfunction!(log_normal, m)?)?;
+    m.add_function(wrap_pyfunction!(weibull, m)?)?;
+    m.add_function(wrap_pyfunction!(pareto, m)?)?;
+    m.add_function(wrap_pyfunction!(gumbel, m)?)?;
+    m.add_function(wrap_pyfunction!(half_student_t, m)?)?;
     m.add_function(wrap_pyfunction!(multivariate_normal, m)?)?;
     m.add_function(wrap_pyfunction!(dirichlet, m)?)?;
     m.add_function(wrap_pyfunction!(multinomial, m)?)?;

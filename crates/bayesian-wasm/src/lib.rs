@@ -523,6 +523,57 @@ impl DynamicModel {
                 let log_z = (cdf_high - cdf_low).max(1e-10).ln();
                 logp.sub_scalar(log_z)
             }
+            "Weibull" => {
+                let k = self.get_param_f64(&spec.params, "shape", 1.0) as f32;
+                let lambda = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                // log f(x) = ln(k/lambda) + (k-1)*ln(x/lambda) - (x/lambda)^k
+                let log_norm = (k / lambda).ln();
+                let x_clamped = value.clone().clamp(1e-10, f32::MAX);
+                let x_over_lambda = x_clamped.div_scalar(lambda);
+                let log_x_over_lambda = x_over_lambda.clone().log();
+                log_x_over_lambda
+                    .mul_scalar(k - 1.0)
+                    .sub(x_over_lambda.powf_scalar(k))
+                    .add_scalar(log_norm)
+            }
+            "Pareto" => {
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
+                let x_m = self.get_param_f64(&spec.params, "x_m", 1.0) as f32;
+                // log f(x) = ln(alpha) + alpha*ln(x_m) - (alpha+1)*ln(x)
+                let log_norm = alpha.ln() + alpha * x_m.ln();
+                let x_clamped = value.clone().clamp(x_m.max(1e-10), f32::MAX);
+                x_clamped
+                    .log()
+                    .mul_scalar(-(alpha + 1.0))
+                    .add_scalar(log_norm)
+            }
+            "Gumbel" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                // log f(x) = -z - exp(-z) - ln(s) where z = (x - loc) / scale
+                let z = value.clone().sub_scalar(loc).div_scalar(scale);
+                let neg_z = z.clone().neg();
+                let exp_neg_z = neg_z.clone().exp();
+                z.neg().sub(exp_neg_z).sub_scalar(scale.ln())
+            }
+            "HalfStudentT" => {
+                let df = self.get_param_f64(&spec.params, "df", 1.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                // log f(x) = ln(2) + ln_gamma((df+1)/2) - ln_gamma(df/2) - 0.5*ln(df*pi) - ln(scale)
+                //            - ((df+1)/2)*ln(1 + (x/scale)^2/df)
+                let log_norm = (2.0f32).ln() + ln_gamma(((df + 1.0) / 2.0) as f64) as f32
+                    - ln_gamma((df / 2.0) as f64) as f32
+                    - 0.5 * (df * std::f32::consts::PI).ln()
+                    - scale.ln();
+                let x_clamped = value.clone().clamp(1e-10, f32::MAX);
+                let z = x_clamped.div_scalar(scale);
+                let z_sq_over_df = z.powf_scalar(2.0).div_scalar(df);
+                z_sq_over_df
+                    .add_scalar(1.0)
+                    .log()
+                    .mul_scalar(-((df + 1.0) / 2.0))
+                    .add_scalar(log_norm)
+            }
             _ => {
                 // Unknown distribution, return 0
                 Tensor::<WasmBackend, 1>::zeros([1], &self.device)
@@ -715,7 +766,8 @@ impl DynamicModel {
         match self.likelihood.distribution.dist_type.as_str() {
             "Normal" | "HalfNormal" | "HalfCauchy" | "Exponential" | "Gamma" | "Beta"
             | "InverseGamma" | "StudentT" | "Cauchy" | "LogNormal" | "Bernoulli" | "Binomial"
-            | "Poisson" | "Laplace" | "Logistic" | "ChiSquared" | "TruncatedNormal" => true,
+            | "Poisson" | "Laplace" | "Logistic" | "ChiSquared" | "TruncatedNormal" | "Weibull"
+            | "Pareto" | "Gumbel" | "HalfStudentT" => true,
             _ => false,
         }
     }
@@ -930,6 +982,50 @@ impl DynamicModel {
                 let log_z = (cdf_high - cdf_low).max(1e-10).ln();
                 let log_prob = log_prob_normal - log_z as f64;
                 let grad = (-(value - loc) / (scale * scale)) as f64;
+                (log_prob, grad)
+            }
+            "Weibull" => {
+                let k = self.get_param_f64(&spec.params, "shape", 1.0) as f32;
+                let lambda = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let x = value.max(1e-10);
+                let x_over_lambda = x / lambda;
+                let log_prob = ((k / lambda).ln() + (k - 1.0) * x_over_lambda.ln()
+                    - x_over_lambda.powf(k)) as f64;
+                // d/dx = (k-1)/x - k*(x/lambda)^(k-1)/lambda
+                let grad = ((k - 1.0) / x - k * x_over_lambda.powf(k - 1.0) / lambda) as f64;
+                (log_prob, grad)
+            }
+            "Pareto" => {
+                let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
+                let x_m = self.get_param_f64(&spec.params, "x_m", 1.0) as f32;
+                let x = value.max(x_m.max(1e-10));
+                let log_prob = (alpha.ln() + alpha * x_m.ln() - (alpha + 1.0) * x.ln()) as f64;
+                // d/dx = -(alpha+1)/x
+                let grad = (-(alpha + 1.0) / x) as f64;
+                (log_prob, grad)
+            }
+            "Gumbel" => {
+                let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let z = (value - loc) / scale;
+                let exp_neg_z = (-z).exp();
+                let log_prob = (-z - exp_neg_z - scale.ln()) as f64;
+                // d/dx = (-1 + exp(-z)) / scale
+                let grad = ((-1.0 + exp_neg_z) / scale) as f64;
+                (log_prob, grad)
+            }
+            "HalfStudentT" => {
+                let df = self.get_param_f64(&spec.params, "df", 1.0) as f32;
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let x = value.max(1e-10);
+                let log_norm = (2.0f32).ln() + ln_gamma(((df + 1.0) / 2.0) as f64) as f32
+                    - ln_gamma((df / 2.0) as f64) as f32
+                    - 0.5 * (df * std::f32::consts::PI).ln()
+                    - scale.ln();
+                let z_sq = (x / scale).powi(2);
+                let log_prob = (log_norm - ((df + 1.0) / 2.0) * (1.0 + z_sq / df).ln()) as f64;
+                // d/dx = -(df+1)*x / (scale^2*df + x^2)
+                let grad = (-(df + 1.0) * x / (scale * scale * df + x * x)) as f64;
                 (log_prob, grad)
             }
             _ => (0.0, 0.0),
@@ -1192,6 +1288,19 @@ fn generate_inits(
                         k.max(0.1) + 0.1 * chain_idx as f32
                     }
                     "Laplace" | "Logistic" => {
+                        // Real-valued, initialize near location
+                        let loc = prior
+                            .params
+                            .get("loc")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0) as f32;
+                        loc + 0.1 * (chain_idx as f32 - num_chains as f32 / 2.0)
+                    }
+                    "Weibull" | "Pareto" | "HalfStudentT" => {
+                        // Positive distributions: initialize around 1
+                        1.0 + 0.1 * chain_idx as f32
+                    }
+                    "Gumbel" => {
                         // Real-valued, initialize near location
                         let loc = prior
                             .params

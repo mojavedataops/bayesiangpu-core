@@ -18,10 +18,12 @@ reference:
       - Normal
       - HalfNormal
       - HalfCauchy
+      - HalfStudentT
       - Beta
       - Gamma
       - Uniform
       - Exponential
+      - Gumbel
       - Cauchy
       - StudentT
       - LogNormal
@@ -31,11 +33,13 @@ reference:
       - MultivariateNormal
       - Dirichlet
       - Multinomial
+      - Pareto
       - Laplace
       - Logistic
       - InverseGamma
       - ChiSquared
       - TruncatedNormal
+      - Weibull
       - print.bg_distribution
 
   - title: "Model Building"

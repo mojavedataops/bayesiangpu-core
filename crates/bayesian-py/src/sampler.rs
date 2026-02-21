@@ -103,6 +103,9 @@ impl DynamicModel {
                 | "LogNormal"
                 | "InverseGamma"
                 | "ChiSquared"
+                | "Weibull"
+                | "Pareto"
+                | "HalfStudentT"
         )
     }
 
@@ -327,6 +330,67 @@ impl DynamicModel {
                 let log_z = ((cdf_high - cdf_low).max(1e-10)).ln() as f32;
                 logp_normal - log_z
             }
+            "Weibull" => {
+                // Positive support - value is in log space
+                let shape = self.get_f64_param(&dist.params, "shape");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                // x = exp(v), so x/scale = exp(v)/scale, ln(x/scale) = v - ln(scale)
+                let x = value.clone().exp();
+                let x_over_scale = x.clone().div_scalar(scale as f32);
+                let log_x_over_scale = value.clone().sub_scalar((scale as f32).ln());
+                // ln(shape/scale) + (shape-1)*ln(x/scale) - (x/scale)^shape
+                let log_shape_over_scale = ((shape / scale) as f32).ln();
+                let power_term = log_x_over_scale.mul_scalar((shape - 1.0) as f32);
+                let exp_term = x_over_scale.powf_scalar(shape as f32).neg();
+                let logp = power_term.add_scalar(log_shape_over_scale) + exp_term;
+                // Jacobian: log|d/dv exp(v)| = v
+                logp + value.clone()
+            }
+            "Pareto" => {
+                // Positive support - value is in log space
+                let alpha = self.get_f64_param(&dist.params, "alpha");
+                let x_m = self.get_f64_param(&dist.params, "x_m");
+                // x = exp(v), ln(x) = v
+                let log_norm = (alpha.ln() + alpha * x_m.ln()) as f32;
+                let log_x = value.clone(); // ln(x) = v
+                let logp = log_x
+                    .mul_scalar(-((alpha + 1.0) as f32))
+                    .add_scalar(log_norm);
+                // Jacobian
+                logp + value.clone()
+            }
+            "Gumbel" => {
+                // Real support - no transform needed
+                let loc = self.get_f64_param(&dist.params, "loc");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                let z = value
+                    .clone()
+                    .sub_scalar(loc as f32)
+                    .div_scalar(scale as f32);
+                let neg_z = z.clone().neg();
+                let exp_neg_z = neg_z.clone().exp();
+                let log_scale = (scale as f32).ln();
+                neg_z.sub_scalar(log_scale) - exp_neg_z
+            }
+            "HalfStudentT" => {
+                // Positive support - value is in log space
+                let df = self.get_f64_param(&dist.params, "df");
+                let scale = self.get_f64_param(&dist.params, "scale");
+                // x = exp(v)
+                let x = value.clone().exp();
+                let z = x.div_scalar(scale as f32);
+                let z_sq = z.powf_scalar(2.0);
+                let inner = z_sq.div_scalar(df as f32).add_scalar(1.0);
+                let half_df_plus_one = (df + 1.0) / 2.0;
+                let log_kernel = inner.log().mul_scalar(half_df_plus_one as f32);
+                let norm = (2.0_f64.ln() + ln_gamma((df + 1.0) / 2.0)
+                    - ln_gamma(df / 2.0)
+                    - 0.5 * (df * std::f64::consts::PI).ln()
+                    - scale.ln()) as f32;
+                let logp = log_kernel.neg().add_scalar(norm);
+                // Jacobian
+                logp + value.clone()
+            }
             _ => {
                 // Default: just return 0 (improper uniform)
                 Tensor::<PyBackend, 1>::zeros([1], &self.device)
@@ -480,11 +544,12 @@ impl DynamicModel {
     #[allow(dead_code)]
     fn get_support(&self, dist: &PyDistribution) -> Support {
         match dist.dist_type.as_str() {
-            "Normal" | "StudentT" | "Cauchy" | "Laplace" | "Logistic" | "TruncatedNormal" => {
-                Support::Real
-            }
+            "Normal" | "StudentT" | "Cauchy" | "Laplace" | "Logistic" | "TruncatedNormal"
+            | "Gumbel" => Support::Real,
             "HalfNormal" | "HalfCauchy" | "Gamma" | "Exponential" | "LogNormal"
-            | "InverseGamma" | "ChiSquared" => Support::Positive,
+            | "InverseGamma" | "ChiSquared" | "Weibull" | "Pareto" | "HalfStudentT" => {
+                Support::Positive
+            }
             "Beta" | "Uniform" => Support::UnitInterval,
             _ => Support::Real,
         }
