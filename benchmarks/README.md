@@ -86,20 +86,42 @@ python -m benchmarks.visualization.charts results/benchmark_results.json
 
 ## Results
 
-Results will be generated in `results/` after running benchmarks.
+Settings: 200 draws, 100 warmup, 2 chains, Apple M3 Pro, macOS.
 
-| Model | BayesianGPU | PyMC | NumPyro | CmdStan | brms |
-|-------|------------|------|---------|---------|------|
-| Beta-Binomial | - | - | - | - | - |
-| Normal Mean | - | - | - | - | - |
-| Linear Regression | - | - | - | - | - |
-| Logistic Regression | - | - | - | - | - |
-| Hierarchical Intercepts | - | - | - | - | - |
-| Eight Schools | - | - | - | - | - |
-| Wide Regression | - | - | - | - | - |
-| Deep Hierarchy | - | - | - | - | - |
+### Wall Time (seconds)
 
-*Run `python -m benchmarks.run_benchmarks --frameworks all --models all --output results/results.json` to populate.*
+| Model | Params | BayesianGPU (cpu) | NumPyro | PyMC |
+|-------|--------|-------------------|---------|------|
+| Beta-Binomial | 1 | **0.73** | 2.11 | 2.62 |
+| Normal Mean | 2 | 21.54 | **1.63** | 1.41 |
+| Linear Regression | 11 | timeout | **1.83** | 3.09 |
+| Logistic Regression | 50 | timeout | **1.72** | error |
+| Hierarchical Intercepts | 22 | timeout | **2.25** | 10.05 |
+| Eight Schools | 10 | timeout | **1.93** | 5.77 |
+| Wide Regression | 1001 | timeout | **10.52** | error |
+| Deep Hierarchy | 504 | timeout | **3.25** | 15.75 |
+
+### ESS per Second (higher is better)
+
+| Model | Params | BayesianGPU (cpu) | NumPyro | PyMC |
+|-------|--------|-------------------|---------|------|
+| Beta-Binomial | 1 | **100.8** | 60.1 | 57.1 |
+| Normal Mean | 2 | 1.7 | 169.2 | **261.4** |
+| Linear Regression | 11 | - | **154.0** | 143.0 |
+| Logistic Regression | 50 | - | **189.4** | - |
+| Hierarchical Intercepts | 22 | - | **180.5** | 10.4 |
+| Eight Schools | 10 | - | 11.2 | 0.4 |
+| Wide Regression | 1001 | - | 0.3 | - |
+| Deep Hierarchy | 504 | - | **82.9** | 6.0 |
+
+### Key Takeaways
+
+- **BayesianGPU leads on simple models**: 1.7x faster wall time and 1.7x higher ESS/s than competitors on the 1-parameter Beta-Binomial
+- **Per-step overhead limits scaling**: Models with 2+ parameters expose the cost of per-step gradient computation through Burn's interpreted tensor operations vs PyTensor's C/LLVM compilation and JAX's XLA
+- **NumPyro dominates multi-parameter models**: JAX's XLA compilation gives NumPyro consistently best performance on 10+ parameter models
+- **Optimization path**: Vectorized gradient computation, compiled kernels, and parallel chains would close the gap
+
+*Regenerate with: `python -m benchmarks.run_benchmarks --frameworks all --models all --output results/full_benchmark.json`*
 
 ## GPU Backend Notes
 

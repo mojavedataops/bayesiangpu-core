@@ -1,0 +1,164 @@
+[
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "beta_binomial",
+    "wall_time_s": 0.7250240829889663,
+    "peak_memory_mb": 0.0007171630859375,
+    "ess_per_second": 100.79383990572556,
+    "min_ess": 73.07796134858535,
+    "error": null
+  },
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "normal_mean",
+    "wall_time_s": 21.5424778329907,
+    "peak_memory_mb": 0.00070953369140625,
+    "ess_per_second": 1.7114686363612872,
+    "min_ess": 36.86927516067185,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "beta_binomial",
+    "wall_time_s": 2.6244287919835187,
+    "peak_memory_mb": 12.690831184387207,
+    "ess_per_second": 57.090349071633064,
+    "min_ess": 149.82955584798336,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "beta_binomial",
+    "wall_time_s": 2.106377499992959,
+    "peak_memory_mb": 2.399258613586426,
+    "ess_per_second": 60.05722385209474,
+    "min_ess": 126.50318503409284,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "normal_mean",
+    "wall_time_s": 1.4075113330036402,
+    "peak_memory_mb": 4.563397407531738,
+    "ess_per_second": 261.43843356489106,
+    "min_ess": 367.97755812530346,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "normal_mean",
+    "wall_time_s": 1.6291834160219878,
+    "peak_memory_mb": 2.154165267944336,
+    "ess_per_second": 169.20798610636243,
+    "min_ess": 275.67084482296457,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "linear_regression",
+    "wall_time_s": 3.085672666958999,
+    "peak_memory_mb": 4.070905685424805,
+    "ess_per_second": 142.96553853350036,
+    "min_ess": 441.1448545698956,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "linear_regression",
+    "wall_time_s": 1.82713337498717,
+    "peak_memory_mb": 2.1842517852783203,
+    "ess_per_second": 154.03900218035682,
+    "min_ess": 281.4498019334514,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "logistic_regression",
+    "wall_time_s": 0,
+    "peak_memory_mb": 0,
+    "ess_per_second": 0,
+    "min_ess": 0,
+    "error": ""
+  },
+  {
+    "framework": "NumPyro",
+    "model": "logistic_regression",
+    "wall_time_s": 1.715828042011708,
+    "peak_memory_mb": 1.9141368865966797,
+    "ess_per_second": 189.4060414091849,
+    "min_ess": 324.9881971763102,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "hierarchical_intercepts",
+    "wall_time_s": 10.04713904199889,
+    "peak_memory_mb": 6.341014862060547,
+    "ess_per_second": 10.35333965453573,
+    "min_ess": 104.02144305816124,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "hierarchical_intercepts",
+    "wall_time_s": 2.2545209999661893,
+    "peak_memory_mb": 2.7330503463745117,
+    "ess_per_second": 180.5090955176964,
+    "min_ess": 406.9615465295493,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "eight_schools",
+    "wall_time_s": 5.765122624987271,
+    "peak_memory_mb": 5.243378639221191,
+    "ess_per_second": 0.4484142809951079,
+    "min_ess": 2.585163316732296,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "eight_schools",
+    "wall_time_s": 1.934309125004802,
+    "peak_memory_mb": 2.408771514892578,
+    "ess_per_second": 11.225584104599015,
+    "min_ess": 21.713749767034734,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "wide_regression",
+    "wall_time_s": 0,
+    "peak_memory_mb": 0,
+    "ess_per_second": 0,
+    "min_ess": 0,
+    "error": ""
+  },
+  {
+    "framework": "NumPyro",
+    "model": "wide_regression",
+    "wall_time_s": 10.524410250014625,
+    "peak_memory_mb": 5.555361747741699,
+    "ess_per_second": 0.27618919079798104,
+    "min_ess": 2.9067283505775166,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "deep_hierarchy",
+    "wall_time_s": 15.754063708998729,
+    "peak_memory_mb": 12.901082038879395,
+    "ess_per_second": 5.977399678614399,
+    "min_ess": 94.16833535103976,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "deep_hierarchy",
+    "wall_time_s": 3.2531852499814704,
+    "peak_memory_mb": 3.2612228393554688,
+    "ess_per_second": 82.9440129995788,
+    "min_ess": 269.8322396645011,
+    "error": null
+  }
+]

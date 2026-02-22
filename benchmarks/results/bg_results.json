@@ -1,0 +1,20 @@
+[
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "beta_binomial",
+    "wall_time_s": 0.7250240829889663,
+    "peak_memory_mb": 0.0007171630859375,
+    "ess_per_second": 100.79383990572556,
+    "min_ess": 73.07796134858535,
+    "error": null
+  },
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "normal_mean",
+    "wall_time_s": 21.5424778329907,
+    "peak_memory_mb": 0.00070953369140625,
+    "ess_per_second": 1.7114686363612872,
+    "min_ess": 36.86927516067185,
+    "error": null
+  }
+]
