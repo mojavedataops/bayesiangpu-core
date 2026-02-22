@@ -67,7 +67,7 @@ impl<B: Backend> GpuRng<B> {
     pub fn new(seed: u64, num_threads: usize, device: &B::Device) -> Self {
         // Initialize state with different seeds per thread using PCG hash
         // Each thread needs 4 u32 values for XorShift128 state
-        let mut state_data: Vec<i64> = Vec::with_capacity(num_threads * 4);
+        let mut state_data: Vec<i32> = Vec::with_capacity(num_threads * 4);
 
         for thread_id in 0..num_threads {
             // Generate unique seed for each thread
@@ -87,10 +87,10 @@ impl<B: Backend> GpuRng<B> {
             };
 
             // Cast through i32 to preserve bit pattern (wrapping for values > i32::MAX)
-            state_data.push((s0 as i32) as i64);
-            state_data.push((s1 as i32) as i64);
-            state_data.push((s2 as i32) as i64);
-            state_data.push((s3 as i32) as i64);
+            state_data.push(s0 as i32);
+            state_data.push(s1 as i32);
+            state_data.push(s2 as i32);
+            state_data.push(s3 as i32);
         }
 
         let state =
@@ -119,14 +119,20 @@ impl<B: Backend> GpuRng<B> {
     pub fn uniform(&mut self, shape: &[usize]) -> Tensor<B, 1> {
         let total_samples: usize = shape.iter().product();
 
-        // Extract current state to CPU for update
-        let state_data: Vec<i64> = self.state.clone().into_data().to_vec().unwrap();
+        // Extract current state to CPU for update (convert handles i32/i64 backend differences)
+        let state_data: Vec<i32> = self
+            .state
+            .clone()
+            .into_data()
+            .convert::<i32>()
+            .to_vec()
+            .unwrap();
 
         // Mutable copy of state
         let mut state_vec: Vec<u32> = state_data.iter().map(|&x| x as u32).collect();
 
         // Generate u32 samples using round-robin across threads
-        let mut u32_samples: Vec<i64> = Vec::with_capacity(total_samples);
+        let mut u32_samples: Vec<i32> = Vec::with_capacity(total_samples);
         for i in 0..total_samples {
             let thread_idx = i % self.num_threads;
             let state_offset = thread_idx * 4;
@@ -150,12 +156,12 @@ impl<B: Backend> GpuRng<B> {
             state_vec[state_offset + 2] = z;
             state_vec[state_offset + 3] = w;
 
-            // Store as i64 (preserving bits via i32 for tensor compatibility)
-            u32_samples.push((w as i32) as i64);
+            // Store as i32 (preserving bits for tensor compatibility)
+            u32_samples.push(w as i32);
         }
 
         // Update GPU state
-        let new_state_data: Vec<i64> = state_vec.iter().map(|&x| (x as i32) as i64).collect();
+        let new_state_data: Vec<i32> = state_vec.iter().map(|&x| x as i32).collect();
         self.state = Tensor::<B, 1, Int>::from_ints(&new_state_data[..], &self.device)
             .reshape([self.num_threads, 4]);
 
@@ -296,8 +302,14 @@ impl<B: Backend> GpuRng<B> {
 
         let mut samples: Vec<f32> = Vec::with_capacity(n);
 
-        // Extract state for CPU-side rejection sampling
-        let state_data: Vec<i64> = self.state.clone().into_data().to_vec().unwrap();
+        // Extract state for CPU-side rejection sampling (convert handles i32/i64 backend differences)
+        let state_data: Vec<i32> = self
+            .state
+            .clone()
+            .into_data()
+            .convert::<i32>()
+            .to_vec()
+            .unwrap();
         let mut state_vec: Vec<u32> = state_data.iter().map(|&x| x as u32).collect();
 
         let mut sample_idx = 0;
@@ -341,7 +353,7 @@ impl<B: Backend> GpuRng<B> {
         }
 
         // Update GPU state
-        let new_state_data: Vec<i64> = state_vec.iter().map(|&x| (x as i32) as i64).collect();
+        let new_state_data: Vec<i32> = state_vec.iter().map(|&x| x as i32).collect();
         self.state = Tensor::<B, 1, Int>::from_ints(&new_state_data[..], &self.device)
             .reshape([self.num_threads, 4]);
 

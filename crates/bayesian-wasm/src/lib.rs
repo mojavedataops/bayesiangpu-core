@@ -785,7 +785,9 @@ impl DynamicModel {
                     .unwrap_or(0);
 
                 // Extract the full Cholesky off-diagonal slice from all_params
-                let z_slice = all_params.clone().slice([prior_offset..prior_offset + n_tri]);
+                let z_slice = all_params
+                    .clone()
+                    .slice([prior_offset..prior_offset + n_tri]);
                 let z_data: Vec<f32> = (0..n_tri)
                     .map(|k| z_slice.clone().slice([k..k + 1]).into_scalar())
                     .collect();
@@ -806,7 +808,7 @@ impl DynamicModel {
                     if i > 0 {
                         let diag_sq = (1.0 - row_sq_sum).max(1e-20);
                         let log_diag = 0.5 * diag_sq.ln(); // log(sqrt(1 - sum)) = 0.5*log(1 - sum)
-                        // Weight: (D - i - 1) from Jacobian + 2*(eta - 1) from LKJ density
+                                                           // Weight: (D - i - 1) from Jacobian + 2*(eta - 1) from LKJ density
                         let weight = (dim as f64 - i as f64 - 1.0) + 2.0 * (eta - 1.0);
                         log_diag_sum += weight * log_diag;
                     }
@@ -1556,8 +1558,7 @@ impl DynamicModel {
                     row_of_m = dim - 1; // last row
                 }
 
-                let weight_row =
-                    (dim as f64 - row_of_m as f64 - 1.0) + 2.0 * (eta - 1.0);
+                let weight_row = (dim as f64 - row_of_m as f64 - 1.0) + 2.0 * (eta - 1.0);
                 let z_m = value as f64;
                 let grad = -weight_row * z_m / diag_sq[row_of_m];
                 // Divide by n_tri to match per-element log_prob
