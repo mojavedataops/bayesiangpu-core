@@ -18,7 +18,7 @@ Create a Gumbel distribution. Used for modeling extreme values
 (maximum or minimum of samples).
 }
 \examples{
-\dontrun{
+\donttest{
 Gumbel()       # Standard Gumbel
 Gumbel(0, 2)   # Wider Gumbel
 }

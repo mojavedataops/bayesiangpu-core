@@ -18,7 +18,7 @@ Create a Laplace (double exponential) distribution. Heavier tails than
 the Normal distribution, useful for sparsity-inducing priors.
 }
 \examples{
-\dontrun{
+\donttest{
 Laplace(0, 1)  # Standard Laplace
 }
 }

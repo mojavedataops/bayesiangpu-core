@@ -17,7 +17,7 @@ A distribution specification
 Create a Binomial distribution for count of successes in n trials.
 }
 \examples{
-\dontrun{
+\donttest{
 Binomial(100, 0.5)      # 100 trials, 50\% success
 Binomial(100, "theta")  # Parameter from model
 }

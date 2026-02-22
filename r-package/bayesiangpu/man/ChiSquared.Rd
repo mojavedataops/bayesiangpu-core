@@ -17,7 +17,7 @@ Create a Chi-Squared distribution. A special case of the Gamma
 distribution, used in hypothesis testing and confidence intervals.
 }
 \examples{
-\dontrun{
+\donttest{
 ChiSquared(5)  # 5 degrees of freedom
 }
 }

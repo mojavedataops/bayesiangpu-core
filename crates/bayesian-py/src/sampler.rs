@@ -76,6 +76,9 @@ impl DynamicModel {
     ) -> Tensor<PyBackend, 1> {
         match value {
             ParamValue::Number(n) => self.scalar_tensor(*n),
+            ParamValue::LinearPredictor { .. } => {
+                panic!("LinearPredictor cannot be used with get_param_value; use resolve_for_observation instead")
+            }
             ParamValue::Reference(name) => {
                 // Find the parameter by prior name and use offset
                 let idx = self
@@ -120,6 +123,9 @@ impl DynamicModel {
     ) -> Tensor<PyBackend, 1> {
         match value {
             ParamValue::Number(n) => self.scalar_tensor(*n),
+            ParamValue::LinearPredictor { .. } => {
+                panic!("LinearPredictor cannot be used as a prior parameter; use it in likelihood distributions only")
+            }
             ParamValue::Reference(name) => {
                 let idx = self
                     .spec
@@ -281,8 +287,8 @@ impl DynamicModel {
             }
             "ChiSquared" => {
                 // Positive support - value is in log space
-                // ChiSquared(k) = Gamma(k/2, 1/2)
-                let k = self.get_f64_param(&dist.params, "k");
+                // ChiSquared(df) = Gamma(df/2, 1/2)
+                let k = self.get_f64_param(&dist.params, "df");
                 let shape = k / 2.0;
                 let rate = 0.5_f64;
                 let transformed = value.clone().exp();
@@ -300,6 +306,11 @@ impl DynamicModel {
                 let scale = self.get_f64_param(&dist.params, "scale");
                 let low = self.get_f64_param(&dist.params, "low");
                 let high = self.get_f64_param(&dist.params, "high");
+                // Enforce truncation bounds
+                let v: f32 = value.clone().into_scalar().elem();
+                if (v as f64) < low || (v as f64) > high {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 // TruncatedNormal log_prob = Normal.log_prob(x) - log(Phi((high-loc)/scale) - Phi((low-loc)/scale))
                 let z = value
                     .clone()
@@ -350,7 +361,12 @@ impl DynamicModel {
                 // Positive support - value is in log space
                 let alpha = self.get_f64_param(&dist.params, "alpha");
                 let x_m = self.get_f64_param(&dist.params, "x_m");
-                // x = exp(v), ln(x) = v
+                // x = exp(v), check x >= x_m
+                let v_f32: f32 = value.clone().into_scalar().elem();
+                if (v_f32 as f64).exp() < x_m {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
+                // ln(x) = v
                 let log_norm = (alpha.ln() + alpha * x_m.ln()) as f32;
                 let log_x = value.clone(); // ln(x) = v
                 let logp = log_x
@@ -412,6 +428,11 @@ impl DynamicModel {
             "DiscreteUniform" => {
                 let low = self.get_f64_param(&dist.params, "low");
                 let high = self.get_f64_param(&dist.params, "high");
+                let v: f32 = value.clone().into_scalar().elem();
+                let k = v as f64;
+                if k < low || k > high || k.fract() != 0.0 {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 let n = high - low + 1.0;
                 let logp = -(n.ln());
                 self.scalar_tensor(logp)
@@ -435,6 +456,9 @@ impl DynamicModel {
                 let zero_prob = self.get_f64_param(&dist.params, "zero_prob");
                 let v: f32 = value.clone().into_scalar().elem();
                 let k = v as f64;
+                if k < 0.0 || k.fract() != 0.0 {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 let logp = if k == 0.0 {
                     (zero_prob + (1.0 - zero_prob) * (-rate).exp()).ln()
                 } else {
@@ -448,6 +472,9 @@ impl DynamicModel {
                 let zero_prob = self.get_f64_param(&dist.params, "zero_prob");
                 let v: f32 = value.clone().into_scalar().elem();
                 let k = v as f64;
+                if k < 0.0 || k.fract() != 0.0 {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 let logp = if k == 0.0 {
                     (zero_prob + (1.0 - zero_prob) * p.powf(r)).ln()
                 } else {
@@ -463,6 +490,12 @@ impl DynamicModel {
                 let n = self.get_f64_param(&dist.params, "n");
                 let v: f32 = value.clone().into_scalar().elem();
                 let k = v as f64;
+                // Check support: k must be in [max(0, n-(N-K)), min(K, n)]
+                let k_min = (n - (big_n - big_k)).max(0.0);
+                let k_max = big_k.min(n);
+                if k < k_min || k > k_max || k.fract() != 0.0 {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 let ln_choose = |a: f64, b: f64| -> f64 {
                     ln_gamma(a + 1.0) - ln_gamma(b + 1.0) - ln_gamma(a - b + 1.0)
                 };
@@ -472,13 +505,16 @@ impl DynamicModel {
             }
             "OrderedLogistic" => {
                 let eta = self.get_f64_param(&dist.params, "eta");
-                let cutpoints_str = match dist.params.get("cutpoints_json") {
+                let cutpoints_str = match dist.params.get("cutpoints") {
                     Some(ParamValue::Reference(s)) => s.clone(),
                     _ => "[]".to_string(),
                 };
                 let cutpoints: Vec<f64> = serde_json::from_str(&cutpoints_str).unwrap_or_default();
                 let num_cat = cutpoints.len() + 1;
                 let v: f32 = value.clone().into_scalar().elem();
+                if v < 0.0 {
+                    return self.scalar_tensor(f64::NEG_INFINITY);
+                }
                 let j = v.round() as usize;
 
                 let sigmoid_f = |x: f64| -> f64 { 1.0 / (1.0 + (-x).exp()) };
@@ -522,6 +558,41 @@ impl DynamicModel {
     ) -> Tensor<PyBackend, 1> {
         match value {
             ParamValue::Number(n) => self.scalar_tensor(*n),
+            ParamValue::LinearPredictor {
+                matrix_key,
+                param_name,
+                num_cols,
+                ..
+            } => {
+                let x_flat = known.get(matrix_key.as_str()).unwrap_or_else(|| {
+                    panic!("Design matrix '{}' not found in known data", matrix_key)
+                });
+                let row_start = obs_idx * num_cols;
+                let mut dot = self.scalar_tensor(0.0);
+                let param_idx = self
+                    .spec
+                    .priors
+                    .iter()
+                    .position(|p| &p.name == param_name)
+                    .unwrap_or_else(|| {
+                        panic!("Parameter '{}' not found in model priors", param_name)
+                    });
+                let offset = self.prior_offsets[param_idx];
+                for j in 0..*num_cols {
+                    let x_val = self.scalar_tensor(x_flat[row_start + j]);
+                    #[allow(clippy::single_range_in_vec_init)]
+                    let beta_j = params.clone().slice([offset + j..offset + j + 1]);
+                    let beta_j = if Self::is_positive_support_dist(
+                        &self.spec.priors[param_idx].distribution.dist_type,
+                    ) {
+                        beta_j.exp()
+                    } else {
+                        beta_j
+                    };
+                    dot = dot + x_val * beta_j;
+                }
+                dot
+            }
             ParamValue::Reference(name) => {
                 // Check known data first
                 if let Some(known_vals) = known.get(name.as_str()) {
@@ -564,18 +635,15 @@ impl DynamicModel {
 
         match dist.dist_type.as_str() {
             "Bernoulli" => {
-                let p =
-                    self.get_param_value(dist.params.get("p").expect("Bernoulli needs p"), params);
-                // Transform to [0,1] - p is in unconstrained space
-                let p_constrained = sigmoid(p);
-
-                // Bernoulli log likelihood: sum(y * log(p) + (1-y) * log(1-p))
+                let p_pv = dist.params.get("p").expect("Bernoulli needs p");
                 let mut total_logp = Tensor::<PyBackend, 1>::zeros([1], &self.device);
                 let one = self.scalar_tensor(1.0);
-                for &y in observed {
+                for (j, &y) in observed.iter().enumerate() {
+                    let p_raw = self.resolve_for_observation(p_pv, j, params, known);
+                    let p_constrained = sigmoid(p_raw);
                     let y_tensor = self.scalar_tensor(y);
                     let log_p = p_constrained.clone().log();
-                    let log_1_minus_p = (one.clone() - p_constrained.clone()).log();
+                    let log_1_minus_p = (one.clone() - p_constrained).log();
                     let logp = y_tensor.clone() * log_p + (one.clone() - y_tensor) * log_1_minus_p;
                     total_logp = total_logp + logp;
                 }

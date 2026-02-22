@@ -17,7 +17,7 @@ Create a Geometric distribution. Models the number of failures before
 the first success. A special case of the Negative Binomial with r=1.
 }
 \examples{
-\dontrun{
+\donttest{
 Geometric(0.3)  # p=0.3
 }
 }

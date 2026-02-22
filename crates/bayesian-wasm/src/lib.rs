@@ -482,8 +482,8 @@ impl DynamicModel {
                     .add_scalar(log_norm)
             }
             "ChiSquared" => {
-                let k = self.get_param_f64(&spec.params, "k", 1.0) as f32;
-                // ChiSquared(k) = Gamma(k/2, 1/2)
+                let k = self.get_param_f64(&spec.params, "df", 1.0) as f32;
+                // ChiSquared(df) = Gamma(df/2, 1/2)
                 let shape = k / 2.0;
                 let rate = 0.5_f32;
                 let log_norm = shape * rate.ln() - ln_gamma(shape as f64) as f32;
@@ -499,6 +499,14 @@ impl DynamicModel {
                 let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
                 let low = self.get_param_f64(&spec.params, "low", f64::NEG_INFINITY) as f32;
                 let high = self.get_param_f64(&spec.params, "high", f64::INFINITY) as f32;
+                // Enforce truncation bounds
+                let v = value.clone().into_scalar();
+                if v < low || v > high {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 // Normal log_prob
                 let z = value.clone().sub_scalar(loc).div_scalar(scale);
                 let log_norm = -0.5 * (2.0 * std::f32::consts::PI * scale * scale).ln();
@@ -539,9 +547,17 @@ impl DynamicModel {
             "Pareto" => {
                 let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
                 let x_m = self.get_param_f64(&spec.params, "x_m", 1.0) as f32;
+                // Enforce x >= x_m
+                let v = value.clone().into_scalar();
+                if v < x_m {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 // log f(x) = ln(alpha) + alpha*ln(x_m) - (alpha+1)*ln(x)
                 let log_norm = alpha.ln() + alpha * x_m.ln();
-                let x_clamped = value.clone().clamp(x_m.max(1e-10), f32::MAX);
+                let x_clamped = value.clone().clamp(1e-10, f32::MAX);
                 x_clamped
                     .log()
                     .mul_scalar(-(alpha + 1.0))
@@ -601,6 +617,13 @@ impl DynamicModel {
                 // log f(k) = -ln(high - low + 1)
                 let low = self.get_param_f64(&spec.params, "low", 0.0);
                 let high = self.get_param_f64(&spec.params, "high", 10.0);
+                let k_val = value.clone().into_scalar() as f64;
+                if k_val < low || k_val > high || k_val.fract() != 0.0 {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 let log_prob = -(high - low + 1.0).ln();
                 Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
             }
@@ -629,6 +652,12 @@ impl DynamicModel {
                 let rate = self.get_param_f64(&spec.params, "rate", 1.0);
                 let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
                 let k_val = value.clone().into_scalar() as f64;
+                if k_val < 0.0 || k_val.fract() != 0.0 {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 let log_prob = if k_val == 0.0 {
                     (pi + (1.0 - pi) * (-rate).exp()).ln()
                 } else {
@@ -644,6 +673,12 @@ impl DynamicModel {
                 let p = self.get_param_f64(&spec.params, "p", 0.5);
                 let pi = self.get_param_f64(&spec.params, "zero_prob", 0.0);
                 let k_val = value.clone().into_scalar() as f64;
+                if k_val < 0.0 || k_val.fract() != 0.0 {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 let log_prob = if k_val == 0.0 {
                     (pi + (1.0 - pi) * p.powf(r_param)).ln()
                 } else {
@@ -662,6 +697,15 @@ impl DynamicModel {
                 let big_k = self.get_param_f64(&spec.params, "big_k", 25.0);
                 let n = self.get_param_f64(&spec.params, "n", 10.0);
                 let k_val = value.clone().into_scalar() as f64;
+                // Check support: k must be in [max(0, n-(N-K)), min(K, n)]
+                let k_min = (n - (big_n - big_k)).max(0.0);
+                let k_max = big_k.min(n);
+                if k_val < k_min || k_val > k_max || k_val.fract() != 0.0 {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
                 fn ln_choose(a: f64, b: f64) -> f64 {
                     ln_gamma(a + 1.0) - ln_gamma(b + 1.0) - ln_gamma(a - b + 1.0)
                 }
@@ -678,7 +722,14 @@ impl DynamicModel {
                     .get("cutpoints")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
-                let j = value.clone().into_scalar() as usize;
+                let v = value.clone().into_scalar();
+                if (v as f64) < 0.0 {
+                    return Tensor::<WasmBackend, 1>::from_floats(
+                        [f32::NEG_INFINITY],
+                        &self.device,
+                    );
+                }
+                let j = v as usize;
                 let n_cat = cutpoints.len() + 1;
                 // Compute cumulative probs: P(Y <= j) = sigmoid(c_j - eta)
                 let prob = if j == 0 {
@@ -720,18 +771,20 @@ impl DynamicModel {
 
         match spec.dist_type.as_str() {
             "Bernoulli" => {
-                let p = self.resolve_param_tensor(params, &spec.params, "p");
-                // log Bernoulli(y | p) = y*log(p) + (1-y)*log(1-p)
-                let log_p = p.clone().clamp(1e-10, 1.0 - 1e-10).log();
-                let log_1mp = p.neg().add_scalar(1.0).clamp(1e-10, 1.0 - 1e-10).log();
-
                 let mut log_lik = Tensor::<WasmBackend, 1>::zeros([1], &self.device);
-                for &y in observed {
-                    if y == 1.0 {
-                        log_lik = log_lik.add(log_p.clone());
-                    } else {
-                        log_lik = log_lik.add(log_1mp.clone());
-                    }
+                for (j, &y) in observed.iter().enumerate() {
+                    let p_raw = self.resolve_for_observation(
+                        &spec.params,
+                        "p",
+                        j,
+                        params,
+                        &self.likelihood.known,
+                    );
+                    // Apply sigmoid to get probability
+                    let p = 1.0 / (1.0 + (-p_raw).exp());
+                    let p = p.clamp(1e-10, 1.0 - 1e-10);
+                    let logp = if y == 1.0 { p.ln() } else { (1.0 - p).ln() };
+                    log_lik = log_lik.add_scalar(logp);
                 }
                 log_lik
             }
@@ -847,6 +900,46 @@ impl DynamicModel {
                     0.0
                 }
             }
+            Some(serde_json::Value::Object(obj)) => {
+                // Check for LinearPredictor
+                if obj.get("__type").and_then(|v| v.as_str()) == Some("LinearPredictor") {
+                    let matrix_key = obj
+                        .get("matrix_key")
+                        .and_then(|v| v.as_str())
+                        .expect("LinearPredictor missing matrix_key");
+                    let param_name = obj
+                        .get("param_name")
+                        .and_then(|v| v.as_str())
+                        .expect("LinearPredictor missing param_name");
+                    let num_cols = obj
+                        .get("num_cols")
+                        .and_then(|v| v.as_u64())
+                        .expect("LinearPredictor missing num_cols")
+                        as usize;
+
+                    let x_flat = known.get(matrix_key).unwrap_or_else(|| {
+                        panic!("Design matrix '{}' not found in known data", matrix_key)
+                    });
+                    let row_start = obs_idx * num_cols;
+                    let mut dot = 0.0f32;
+
+                    if let Some(param_idx) = self.prior_names.iter().position(|n| n == param_name) {
+                        let offset = self.prior_offsets[param_idx];
+                        for j in 0..num_cols {
+                            let x_val = x_flat[row_start + j] as f32;
+                            let beta_vals: Vec<f32> = params
+                                .clone()
+                                .slice([offset + j..offset + j + 1])
+                                .into_data()
+                                .to_vec()
+                                .unwrap();
+                            dot += x_val * beta_vals[0];
+                        }
+                    }
+                    return dot;
+                }
+                0.0
+            }
             _ => 0.0,
         }
     }
@@ -872,6 +965,11 @@ impl DynamicModel {
                 } else {
                     Tensor::<WasmBackend, 1>::zeros([1], &self.device)
                 }
+            }
+            Some(serde_json::Value::Object(_obj)) => {
+                // LinearPredictor requires per-observation resolution
+                // Return zero as fallback for scalar resolution
+                Tensor::<WasmBackend, 1>::zeros([1], &self.device)
             }
             _ => Tensor::<WasmBackend, 1>::zeros([1], &self.device),
         }
@@ -1103,7 +1201,7 @@ impl DynamicModel {
                 (log_prob, grad)
             }
             "ChiSquared" => {
-                let k = self.get_param_f64(&spec.params, "k", 1.0) as f32;
+                let k = self.get_param_f64(&spec.params, "df", 1.0) as f32;
                 let shape = k / 2.0;
                 let rate = 0.5_f32;
                 let x = value.max(1e-10);
@@ -1115,12 +1213,15 @@ impl DynamicModel {
             "TruncatedNormal" => {
                 let loc = self.get_param_f64(&spec.params, "loc", 0.0) as f32;
                 let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let low = self.get_param_f64(&spec.params, "low", f64::NEG_INFINITY) as f32;
+                let high = self.get_param_f64(&spec.params, "high", f64::INFINITY) as f32;
+                // Enforce truncation bounds
+                if value < low || value > high {
+                    return (f64::NEG_INFINITY, 0.0);
+                }
                 let z = (value - loc) / scale;
                 let log_norm = -0.5 * (2.0 * std::f32::consts::PI * scale * scale).ln();
                 let log_prob_normal = (log_norm - 0.5 * z * z) as f64;
-                // Subtract log CDF normalization
-                let low = self.get_param_f64(&spec.params, "low", f64::NEG_INFINITY) as f32;
-                let high = self.get_param_f64(&spec.params, "high", f64::INFINITY) as f32;
                 fn normal_cdf_grad(x: f32) -> f32 {
                     0.5 * (1.0 + erf_approx_grad(x / std::f32::consts::SQRT_2))
                 }
@@ -1156,7 +1257,11 @@ impl DynamicModel {
             "Pareto" => {
                 let alpha = self.get_param_f64(&spec.params, "alpha", 1.0) as f32;
                 let x_m = self.get_param_f64(&spec.params, "x_m", 1.0) as f32;
-                let x = value.max(x_m.max(1e-10));
+                // Enforce x >= x_m
+                if value < x_m {
+                    return (f64::NEG_INFINITY, 0.0);
+                }
+                let x = value.max(1e-10);
                 let log_prob = (alpha.ln() + alpha * x_m.ln() - (alpha + 1.0) * x.ln()) as f64;
                 // d/dx = -(alpha+1)/x
                 let grad = (-(alpha + 1.0) / x) as f64;
@@ -1543,10 +1648,10 @@ fn generate_inits(
                         mode.max(0.1) + 0.1 * chain_idx as f32
                     }
                     "ChiSquared" => {
-                        // ChiSquared: positive, initialize around k (degrees of freedom)
+                        // ChiSquared: positive, initialize around df (degrees of freedom)
                         let k = prior
                             .params
-                            .get("k")
+                            .get("df")
                             .and_then(|v| v.as_f64())
                             .unwrap_or(1.0) as f32;
                         k.max(0.1) + 0.1 * chain_idx as f32
@@ -3977,7 +4082,7 @@ mod tests {
         // lgamma(2) = 0 (since 1! = 1)
         assert!((ln_gamma(2.0) - 0.0).abs() < 1e-10);
         // lgamma(3) = ln(2) = 0.693...
-        assert!((ln_gamma(3.0) - 0.693147).abs() < 1e-5);
+        assert!((ln_gamma(3.0) - std::f64::consts::LN_2).abs() < 1e-5);
         // lgamma(4) = ln(6) = 1.791...
         assert!((ln_gamma(4.0) - 1.791759).abs() < 1e-5);
     }

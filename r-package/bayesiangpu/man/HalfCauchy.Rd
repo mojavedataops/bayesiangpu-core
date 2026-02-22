@@ -18,7 +18,7 @@ Heavy-tailed prior for scale parameters, widely recommended
 for hierarchical models.
 }
 \examples{
-\dontrun{
+\donttest{
 HalfCauchy(5)  # Half-Cauchy with scale 5
 }
 }

@@ -17,7 +17,7 @@ A distribution specification (JSON string internally)
 Create a Normal (Gaussian) distribution specification.
 }
 \examples{
-\dontrun{
+\donttest{
 Normal(0, 1)           # Standard normal
 Normal("mu", "sigma")  # Parameters from model
 }

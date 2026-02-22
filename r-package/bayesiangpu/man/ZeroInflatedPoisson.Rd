@@ -18,7 +18,7 @@ Create a Zero-Inflated Poisson distribution. Models count data with
 excess zeros from a separate zero-generating process.
 }
 \examples{
-\dontrun{
+\donttest{
 ZeroInflatedPoisson(3.0, 0.2)  # rate=3, 20% structural zeros
 }
 }

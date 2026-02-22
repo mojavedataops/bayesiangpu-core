@@ -17,7 +17,7 @@ A distribution specification
 Create a Gamma distribution. Defined on (0, infinity), useful for positive parameters.
 }
 \examples{
-\dontrun{
+\donttest{
 Gamma(2, 1)  # Shape=2, rate=1
 }
 }

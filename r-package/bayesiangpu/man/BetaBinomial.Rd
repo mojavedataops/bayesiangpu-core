@@ -20,7 +20,7 @@ the success probability follows a Beta distribution. Useful for
 overdispersed binomial data.
 }
 \examples{
-\dontrun{
+\donttest{
 BetaBinomial(10, 2, 5)  # n=10, alpha=2, beta=5
 }
 }

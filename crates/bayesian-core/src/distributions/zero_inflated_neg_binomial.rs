@@ -112,6 +112,9 @@ impl<B: Backend> Distribution<B> for ZeroInflatedNegativeBinomial<B> {
             .iter()
             .map(|&k| {
                 let k_f64 = k as f64;
+                if k_f64 < 0.0 || k_f64.fract() != 0.0 {
+                    return f32::NEG_INFINITY;
+                }
                 if k_f64 == 0.0 {
                     self.log_prob_zero as f32
                 } else {

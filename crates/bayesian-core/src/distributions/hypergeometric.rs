@@ -94,6 +94,12 @@ impl<B: Backend> Distribution<B> for Hypergeometric<B> {
             .iter()
             .map(|&k| {
                 let k_f64 = k as f64;
+                // Check support: k must be in [max(0, n-(N-K)), min(K, n)]
+                let k_min = (self.n_f64 - (self.big_n_f64 - self.big_k_f64)).max(0.0);
+                let k_max = self.big_k_f64.min(self.n_f64);
+                if k_f64 < k_min || k_f64 > k_max || k_f64.fract() != 0.0 {
+                    return f32::NEG_INFINITY;
+                }
                 // ln_choose(K, k) + ln_choose(N-K, n-k) - ln_choose(N, n)
                 let lc1 = ln_choose(self.big_k_f64, k_f64);
                 let lc2 = ln_choose(self.big_n_f64 - self.big_k_f64, self.n_f64 - k_f64);

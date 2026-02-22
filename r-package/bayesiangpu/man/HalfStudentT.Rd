@@ -19,7 +19,7 @@ A robust alternative to HalfNormal for scale parameters,
 with heavier tails controlled by the degrees of freedom.
 }
 \examples{
-\dontrun{
+\donttest{
 HalfStudentT(3)      # 3 df, scale=1
 HalfStudentT(5, 2)   # 5 df, scale=2
 }

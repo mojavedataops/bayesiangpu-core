@@ -18,7 +18,7 @@ Create an Ordered Logistic (proportional odds) distribution.
 Models ordinal response data with ordered categories.
 }
 \examples{
-\dontrun{
+\donttest{
 OrderedLogistic(0, c(-1, 0, 1))  # 4 categories with cutpoints at -1, 0, 1
 }
 }

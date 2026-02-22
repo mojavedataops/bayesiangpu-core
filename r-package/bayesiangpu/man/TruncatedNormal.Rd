@@ -20,7 +20,7 @@ Create a Truncated Normal distribution. A Normal distribution
 constrained to the interval [low, high].
 }
 \examples{
-\dontrun{
+\donttest{
 TruncatedNormal(0, 1, -2, 2)  # Normal(0,1) truncated to [-2, 2]
 }
 }

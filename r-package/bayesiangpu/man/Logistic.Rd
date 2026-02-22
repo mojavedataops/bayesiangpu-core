@@ -18,7 +18,7 @@ Create a Logistic distribution. Similar shape to Normal but with
 heavier tails, related to the logistic function.
 }
 \examples{
-\dontrun{
+\donttest{
 Logistic(0, 1)  # Standard Logistic
 }
 }

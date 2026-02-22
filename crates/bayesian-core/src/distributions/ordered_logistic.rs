@@ -118,6 +118,9 @@ impl<B: Backend> Distribution<B> for OrderedLogistic<B> {
         let log_probs: Vec<f32> = j_values
             .iter()
             .map(|&j| {
+                if j < 0.0 {
+                    return f32::NEG_INFINITY;
+                }
                 let idx = j.round() as usize;
                 if idx < self.k {
                     self.log_cat_probs[idx] as f32

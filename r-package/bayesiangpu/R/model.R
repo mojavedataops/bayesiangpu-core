@@ -43,6 +43,15 @@ Model <- R6::R6Class(
     #' @param known Named list of per-observation known data (e.g., known = list(sigma = c(15, 10, 16)))
     #' @return self for method chaining
     observe = function(distribution, data, known = NULL) {
+      if (is.null(known)) known <- list()
+      # Merge pending LinearPredictor matrices into known data
+      pending_keys <- ls(.bayesiangpu_pending_matrices)
+      if (length(pending_keys) > 0) {
+        for (key in pending_keys) {
+          known[[key]] <- get(key, envir = .bayesiangpu_pending_matrices)
+        }
+        rm(list = pending_keys, envir = .bayesiangpu_pending_matrices)
+      }
       private$.likelihood <- distribution
       private$.observed <- as.numeric(data)
       private$.known <- known

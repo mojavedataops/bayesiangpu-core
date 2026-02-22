@@ -9,6 +9,13 @@ use std::collections::HashMap;
 #[serde(untagged)]
 pub enum ParamValue {
     Number(f64),
+    LinearPredictor {
+        #[serde(rename = "__type")]
+        __type: String,
+        matrix_key: String,
+        param_name: String,
+        num_cols: usize,
+    },
     Reference(String),
 }
 
@@ -18,9 +25,42 @@ impl ParamValue {
             Ok(ParamValue::Number(n))
         } else if let Ok(s) = obj.extract::<String>() {
             Ok(ParamValue::Reference(s))
+        } else if let Ok(dict) = obj.downcast::<pyo3::types::PyDict>() {
+            if let Some(type_val) = dict.get_item("__type")? {
+                let type_str: String = type_val.extract()?;
+                if type_str == "LinearPredictor" {
+                    let matrix_key: String = dict
+                        .get_item("matrix_key")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing matrix_key")
+                        })?
+                        .extract()?;
+                    let param_name: String = dict
+                        .get_item("param_name")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing param_name")
+                        })?
+                        .extract()?;
+                    let num_cols: usize = dict
+                        .get_item("num_cols")?
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyKeyError, _>("Missing num_cols")
+                        })?
+                        .extract()?;
+                    return Ok(ParamValue::LinearPredictor {
+                        __type: "LinearPredictor".to_string(),
+                        matrix_key,
+                        param_name,
+                        num_cols,
+                    });
+                }
+            }
+            Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
+                "Unknown dict parameter type",
+            ))
         } else {
             Err(PyErr::new::<pyo3::exceptions::PyTypeError, _>(
-                "Parameter must be a number or string reference",
+                "Parameter must be a number, string reference, or LinearPredictor dict",
             ))
         }
     }
@@ -31,6 +71,19 @@ impl IntoPy<PyObject> for ParamValue {
     fn into_py(self, py: Python<'_>) -> PyObject {
         match self {
             ParamValue::Number(n) => n.into_py(py),
+            ParamValue::LinearPredictor {
+                __type,
+                matrix_key,
+                param_name,
+                num_cols,
+            } => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("__type", __type).unwrap();
+                dict.set_item("matrix_key", matrix_key).unwrap();
+                dict.set_item("param_name", param_name).unwrap();
+                dict.set_item("num_cols", num_cols).unwrap();
+                dict.into_py(py)
+            }
             ParamValue::Reference(s) => s.into_py(py),
         }
     }
@@ -54,6 +107,9 @@ impl PyDistribution {
             .map(|(k, v)| {
                 let val_str = match v {
                     ParamValue::Number(n) => format!("{}", n),
+                    ParamValue::LinearPredictor { param_name, .. } => {
+                        format!("LinearPredictor({})", param_name)
+                    }
                     ParamValue::Reference(s) => format!("'{}'", s),
                 };
                 format!("{}={}", k, val_str)
@@ -1001,7 +1057,7 @@ pub fn ordered_logistic(eta: f64, cutpoints: Vec<f64>) -> PyDistribution {
     params.insert("eta".to_string(), ParamValue::Number(eta));
     let cutpoints_json = serde_json::to_string(&cutpoints).unwrap();
     params.insert(
-        "cutpoints_json".to_string(),
+        "cutpoints".to_string(),
         ParamValue::Reference(cutpoints_json),
     );
     params.insert(

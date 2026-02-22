@@ -19,7 +19,7 @@ Create a Zero-Inflated Negative Binomial distribution. Models
 overdispersed count data with excess zeros.
 }
 \examples{
-\dontrun{
+\donttest{
 ZeroInflatedNegativeBinomial(5, 0.3, 0.2)  # r=5, p=0.3, 20% structural zeros
 }
 }

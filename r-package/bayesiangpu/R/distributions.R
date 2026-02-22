@@ -396,7 +396,7 @@ TruncatedNormal <- function(loc, scale, low, high) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Weibull(1.5, 1)  # Shape=1.5, scale=1
 #' }
 Weibull <- function(shape, scale) {
@@ -414,7 +414,7 @@ Weibull <- function(shape, scale) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Pareto(2, 1)  # alpha=2, x_m=1
 #' }
 Pareto <- function(alpha, x_m) {
@@ -432,7 +432,7 @@ Pareto <- function(alpha, x_m) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Gumbel()       # Standard Gumbel
 #' Gumbel(0, 2)   # Wider Gumbel
 #' }
@@ -452,7 +452,7 @@ Gumbel <- function(loc = 0, scale = 1) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' HalfStudentT(3)      # 3 df, scale=1
 #' HalfStudentT(5, 2)   # 5 df, scale=2
 #' }
@@ -471,7 +471,7 @@ HalfStudentT <- function(df, scale = 1) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' NegativeBinomial(5, 0.3)  # r=5, p=0.3
 #' }
 NegativeBinomial <- function(r, p) {
@@ -488,7 +488,7 @@ NegativeBinomial <- function(r, p) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Categorical(c(0.2, 0.3, 0.5))  # 3 categories
 #' }
 Categorical <- function(probs) {
@@ -508,7 +508,7 @@ Categorical <- function(probs) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Geometric(0.3)  # p=0.3
 #' }
 Geometric <- function(p) {
@@ -526,7 +526,7 @@ Geometric <- function(p) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' DiscreteUniform(1, 6)  # Fair die
 #' }
 DiscreteUniform <- function(low, high) {
@@ -546,7 +546,7 @@ DiscreteUniform <- function(low, high) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' BetaBinomial(10, 2, 5)  # n=10, alpha=2, beta=5
 #' }
 BetaBinomial <- function(n, alpha, beta) {
@@ -564,7 +564,7 @@ BetaBinomial <- function(n, alpha, beta) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ZeroInflatedPoisson(3.0, 0.2)  # rate=3, 20% structural zeros
 #' }
 ZeroInflatedPoisson <- function(rate, zero_prob) {
@@ -583,7 +583,7 @@ ZeroInflatedPoisson <- function(rate, zero_prob) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' ZeroInflatedNegativeBinomial(5, 0.3, 0.2)  # r=5, p=0.3, 20% structural zeros
 #' }
 ZeroInflatedNegativeBinomial <- function(r, p, zero_prob) {
@@ -602,7 +602,7 @@ ZeroInflatedNegativeBinomial <- function(r, p, zero_prob) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' Hypergeometric(50, 25, 10)  # N=50, K=25, n=10
 #' }
 Hypergeometric <- function(big_n, big_k, n) {
@@ -620,12 +620,45 @@ Hypergeometric <- function(big_n, big_k, n) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \dontrun{
+#' \donttest{
 #' OrderedLogistic(0, c(-1, 0, 1))  # 4 categories with cutpoints at -1, 0, 1
 #' }
 OrderedLogistic <- function(eta, cutpoints) {
   result <- ordered_logistic_dist(eta, cutpoints)
   structure(result, class = c("bg_distribution", "character"))
+}
+
+#' Create a Linear Predictor for regression models
+#'
+#' Computes X \%*\% beta during log_prob evaluation. The design matrix X
+#' is stored in known data and the dot product is computed per-observation.
+#'
+#' @param X Design matrix (n x p numeric matrix)
+#' @param param_name Name of the coefficient parameter (character string)
+#' @return A JSON string representing the LinearPredictor specification
+#' @export
+#' @examples
+#' X <- matrix(rnorm(200), ncol = 2)
+#' lp <- LinearPredictor(X, "beta")
+LinearPredictor <- function(X, param_name) {
+  X <- as.matrix(X)
+  stopifnot(is.numeric(X), length(dim(X)) == 2)
+  n <- nrow(X)
+  p <- ncol(X)
+  key <- paste0("__X_", param_name)
+
+  # Store flattened matrix (row-major) for later extraction by observe()
+  assign(key, as.numeric(t(X)), envir = .bayesiangpu_pending_matrices)
+
+  jsonlite::toJSON(list(
+    dist_type = "LinearPredictor",
+    params = list(
+      `__type` = "LinearPredictor",
+      matrix_key = key,
+      param_name = param_name,
+      num_cols = p
+    )
+  ), auto_unbox = TRUE)
 }
 
 #' @export
