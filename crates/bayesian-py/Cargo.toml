@@ -20,9 +20,10 @@ bayesian-sampler = { path = "../bayesian-sampler" }
 bayesian-diagnostics = { path = "../bayesian-diagnostics" }
 bayesian-rng = { path = "../bayesian-rng" }
 
-# Burn for tensor operations (CPU backend)
+# Burn for tensor operations
 burn = { workspace = true, features = ["ndarray"] }
 burn-autodiff = { workspace = true }
+burn-wgpu = { workspace = true, optional = true }
 
 # Serialization
 serde = { workspace = true }
@@ -30,6 +31,7 @@ serde_json = { workspace = true }
 
 [features]
 default = []
+wgpu = ["burn/wgpu", "burn-wgpu", "bayesian-core/wgpu", "bayesian-sampler/wgpu", "bayesian-rng/wgpu"]
 
 [dev-dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }

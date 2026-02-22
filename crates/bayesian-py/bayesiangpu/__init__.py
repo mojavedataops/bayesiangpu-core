@@ -73,6 +73,8 @@ from bayesiangpu._core import (
     summarize_parameter,
     # ADVI result
     PyAdviResult as AdviResult,
+    # Backend info
+    backend_name,
     # Version
     __version__,
 )
@@ -234,6 +236,8 @@ __all__ = [
     "summarize_parameter",
     # LinearPredictor
     "LinearPredictor",
+    # Backend info
+    "backend_name",
     # Metadata
     "__version__",
 ]

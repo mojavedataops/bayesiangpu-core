@@ -26,7 +26,7 @@ mod sampler;
 use distributions::*;
 use model::PyModel;
 use result::{PyDiagnostics, PyInferenceResult, PyParameterSummary};
-use sampler::{fit, quick_sample, sample, PyAdviResult};
+use sampler::{backend_name, fit, quick_sample, sample, PyAdviResult};
 
 /// Python module for BayesianGPU
 #[pymodule]
@@ -94,6 +94,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Diagnostic functions
     m.add_function(wrap_pyfunction!(result::is_converged, m)?)?;
     m.add_function(wrap_pyfunction!(result::summarize_parameter, m)?)?;
+
+    // Backend info
+    m.add_function(wrap_pyfunction!(backend_name, m)?)?;
 
     // Version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

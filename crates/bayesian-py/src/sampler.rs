@@ -6,8 +6,17 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
+// Backend selection: wgpu (GPU) or ndarray (CPU)
+#[cfg(not(feature = "wgpu"))]
 use burn::backend::ndarray::NdArrayDevice;
+#[cfg(not(feature = "wgpu"))]
 use burn::backend::{Autodiff, NdArray};
+
+#[cfg(feature = "wgpu")]
+use burn::backend::wgpu::WgpuDevice;
+#[cfg(feature = "wgpu")]
+use burn::backend::{Autodiff, Wgpu};
+
 use burn::prelude::*;
 
 use bayesian_core::{
@@ -25,8 +34,16 @@ use crate::distributions::{ParamValue, PyDistribution};
 use crate::model::{Likelihood, ModelSpec, PyModel};
 use crate::result::{PyDiagnostics, PyInferenceResult};
 
-// Type alias for our backend
+// Type aliases for backend and device
+#[cfg(not(feature = "wgpu"))]
 type PyBackend = Autodiff<NdArray<f32>>;
+#[cfg(not(feature = "wgpu"))]
+type PyDevice = NdArrayDevice;
+
+#[cfg(feature = "wgpu")]
+type PyBackend = Autodiff<Wgpu>;
+#[cfg(feature = "wgpu")]
+type PyDevice = WgpuDevice;
 
 /// Sigmoid function: 1 / (1 + exp(-x))
 fn sigmoid<B: Backend>(x: Tensor<B, 1>) -> Tensor<B, 1> {
@@ -42,7 +59,7 @@ struct DynamicModel {
     prior_sizes: Vec<usize>,
     /// Offset of each prior in the flat parameter vector
     prior_offsets: Vec<usize>,
-    device: NdArrayDevice,
+    device: PyDevice,
 }
 
 impl DynamicModel {
@@ -59,7 +76,7 @@ impl DynamicModel {
             spec,
             prior_sizes,
             prior_offsets,
-            device: NdArrayDevice::default(),
+            device: PyDevice::default(),
         }
     }
 
@@ -554,7 +571,9 @@ impl DynamicModel {
                 // Jacobian of tanh: sum log(1 - tanh(z)^2)
                 let ones = Tensor::<PyBackend, 1>::ones([n_params], &self.device);
                 let tanh_sq = tanh_vals.clone() * tanh_vals.clone();
-                let log_jac = (ones - tanh_sq.clone() + self.scalar_tensor(1e-30)).log().sum();
+                let log_jac = (ones - tanh_sq.clone() + self.scalar_tensor(1e-30))
+                    .log()
+                    .sum();
 
                 // Build Cholesky factor L from partial correlations.
                 // We need the tanh values as scalars for indexing, but keep
@@ -914,7 +933,7 @@ pub fn sample(
     let dynamic_model = DynamicModel::new(spec);
     let dim = dynamic_model.dim();
     let param_names = dynamic_model.param_names();
-    let device = NdArrayDevice::default();
+    let device = PyDevice::default();
 
     // Configure NUTS
     let config = NutsConfig {
@@ -1222,7 +1241,7 @@ pub fn fit(
     let dynamic_model = DynamicModel::new(spec);
     let dim = dynamic_model.dim();
     let param_names = dynamic_model.param_names();
-    let device = NdArrayDevice::default();
+    let device = PyDevice::default();
 
     // Configure ADVI
     let config = AdviConfig {
@@ -1276,5 +1295,18 @@ pub fn fit(
             "Unknown method: {}. Use 'mean_field' or 'full_rank'",
             method
         ))),
+    }
+}
+
+/// Return the active compute backend name ("cpu" or "gpu").
+#[pyfunction]
+pub fn backend_name() -> String {
+    #[cfg(feature = "wgpu")]
+    {
+        "gpu".to_string()
+    }
+    #[cfg(not(feature = "wgpu"))]
+    {
+        "cpu".to_string()
     }
 }

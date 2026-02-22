@@ -13,7 +13,12 @@ SUPPORTED_MODELS = [
 class BayesianGPUAdapter(FrameworkAdapter):
     @property
     def name(self) -> str:
-        return "BayesianGPU"
+        try:
+            import bayesiangpu as bg
+            backend = bg.backend_name()
+        except Exception:
+            backend = "unknown"
+        return f"BayesianGPU ({backend})"
 
     def supports_model(self, model_name: str) -> bool:
         return model_name in SUPPORTED_MODELS

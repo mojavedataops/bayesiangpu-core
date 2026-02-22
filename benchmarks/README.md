@@ -6,7 +6,7 @@ Standardized benchmarks comparing BayesianGPU against established probabilistic 
 
 | Framework | Language | Backend | Version |
 |-----------|----------|---------|---------|
-| **BayesianGPU** | Rust/Python | NdArray (CPU) | 0.2.x |
+| **BayesianGPU** | Rust/Python | NdArray (CPU) / wgpu (GPU) | 0.2.x |
 | **PyMC** | Python | PyTensor/JAX | 5.x |
 | **NumPyro** | Python | JAX | 0.13+ |
 | **CmdStan** | Stan/C++ | CmdStan | 2.x |
@@ -100,3 +100,33 @@ Results will be generated in `results/` after running benchmarks.
 | Deep Hierarchy | - | - | - | - | - |
 
 *Run `python -m benchmarks.run_benchmarks --frameworks all --models all --output results/results.json` to populate.*
+
+## GPU Backend Notes
+
+BayesianGPU supports both CPU (`ndarray`) and GPU (`wgpu`) backends via a compile-time feature flag:
+
+```bash
+# CPU (default)
+maturin develop --release -m crates/bayesian-py/Cargo.toml
+
+# GPU
+maturin develop --features wgpu --release -m crates/bayesian-py/Cargo.toml
+```
+
+Check which backend is active:
+
+```python
+import bayesiangpu as bg
+print(bg.backend_name())  # "cpu" or "gpu"
+```
+
+**Current GPU performance**: The wgpu backend is significantly slower than CPU for MCMC sampling because:
+
+1. NUTS sampling is inherently sequential (each step depends on the previous)
+2. Per-operation GPU overhead (command buffer submission, synchronization) dominates for the small tensor operations typical in MCMC
+3. GPU acceleration excels at batch-parallel workloads, not step-by-step chain evolution
+
+The GPU backend will become competitive when:
+- **Parallel chains on GPU**: Running multiple chains simultaneously in a single GPU kernel
+- **Vectorized likelihoods**: Large observation counts where likelihood evaluation is the bottleneck
+- **Batch VI**: Variational inference with large batch gradient computations

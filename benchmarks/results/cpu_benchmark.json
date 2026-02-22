@@ -1,0 +1,56 @@
+[
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "beta_binomial",
+    "wall_time_s": 0.7405319579993375,
+    "peak_memory_mb": 0.0007171630859375,
+    "ess_per_second": 98.6830623029651,
+    "min_ess": 73.07796134858535,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "beta_binomial",
+    "wall_time_s": 2.5012885000323877,
+    "peak_memory_mb": 12.273255348205566,
+    "ess_per_second": 59.90094938910218,
+    "min_ess": 149.82955584798336,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "beta_binomial",
+    "wall_time_s": 2.092750292038545,
+    "peak_memory_mb": 2.4007482528686523,
+    "ess_per_second": 60.448294053690596,
+    "min_ess": 126.50318503409284,
+    "error": null
+  },
+  {
+    "framework": "BayesianGPU (cpu)",
+    "model": "normal_mean",
+    "wall_time_s": 21.299516041995957,
+    "peak_memory_mb": 0.002735137939453125,
+    "ess_per_second": 1.730991215386172,
+    "min_ess": 36.86927516067185,
+    "error": null
+  },
+  {
+    "framework": "PyMC",
+    "model": "normal_mean",
+    "wall_time_s": 1.417196583992336,
+    "peak_memory_mb": 4.482649803161621,
+    "ess_per_second": 259.6517394140808,
+    "min_ess": 367.97755812530346,
+    "error": null
+  },
+  {
+    "framework": "NumPyro",
+    "model": "normal_mean",
+    "wall_time_s": 1.660636082990095,
+    "peak_memory_mb": 2.151270866394043,
+    "ess_per_second": 166.00316447815547,
+    "min_ess": 275.67084482296457,
+    "error": null
+  }
+]

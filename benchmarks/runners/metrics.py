@@ -41,7 +41,7 @@ def compute_ess(samples: Dict[str, np.ndarray], num_chains: int) -> Dict[str, fl
                 ess_values[name] = 0.0
                 continue
             chains = vals[:draws_per_chain * num_chains].reshape(num_chains, draws_per_chain)
-            data = az.convert_to_dataset({name: chains[np.newaxis, ...]})
+            data = az.convert_to_dataset({name: chains})
             ess_val = az.ess(data)
             ess_values[name] = float(np.asarray(ess_val[name].values).item())
         return ess_values

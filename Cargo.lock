@@ -188,6 +188,7 @@ dependencies = [
  "bayesian-sampler",
  "burn",
  "burn-autodiff",
+ "burn-wgpu",
  "pyo3",
  "serde",
  "serde_json",
