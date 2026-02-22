@@ -65,6 +65,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(multivariate_normal, m)?)?;
     m.add_function(wrap_pyfunction!(dirichlet, m)?)?;
     m.add_function(wrap_pyfunction!(multinomial, m)?)?;
+    m.add_function(wrap_pyfunction!(lkj_corr, m)?)?;
 
     // Likelihood distributions
     m.add_function(wrap_pyfunction!(bernoulli, m)?)?;

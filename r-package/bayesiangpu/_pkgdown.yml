@@ -42,6 +42,7 @@ reference:
       - ZeroInflatedNegativeBinomial
       - Hypergeometric
       - OrderedLogistic
+      - LKJCorr
       - Pareto
       - Laplace
       - Logistic

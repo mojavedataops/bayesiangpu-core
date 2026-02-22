@@ -1036,6 +1036,49 @@ pub fn hypergeometric(big_n: f64, big_k: f64, n: f64) -> PyDistribution {
     }
 }
 
+/// LKJ Correlation distribution
+///
+/// Prior over correlation matrices parameterized by a single concentration
+/// parameter eta. When eta = 1, the prior is uniform over valid correlation
+/// matrices. When eta > 1, the prior favors the identity matrix.
+///
+/// The model stores D*(D-1)/2 unconstrained parameters that are transformed
+/// to a Cholesky factor of a correlation matrix via partial correlations
+/// (tanh transform).
+///
+/// Args:
+///     dim: Dimension of the correlation matrix (D >= 2)
+///     eta: Concentration parameter (must be positive)
+///
+/// Returns:
+///     Distribution specification
+///
+/// Example:
+///     >>> LKJCorr(3, 1.0)  # Uniform over 3x3 correlation matrices
+///     >>> LKJCorr(4, 2.0)  # Favor identity for 4x4
+#[pyfunction]
+pub fn lkj_corr(dim: usize, eta: f64) -> PyResult<PyDistribution> {
+    if dim < 2 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "LKJCorr requires dim >= 2",
+        ));
+    }
+    if eta <= 0.0 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "LKJCorr requires eta > 0",
+        ));
+    }
+
+    let mut params = HashMap::new();
+    params.insert("dim".to_string(), ParamValue::Number(dim as f64));
+    params.insert("eta".to_string(), ParamValue::Number(eta));
+
+    Ok(PyDistribution {
+        dist_type: "LKJCorr".to_string(),
+        params,
+    })
+}
+
 /// Ordered Logistic distribution
 ///
 /// Models ordinal outcomes with K categories defined by K-1 cutpoints.

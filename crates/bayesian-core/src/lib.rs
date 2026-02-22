@@ -15,6 +15,7 @@ pub use distributions::exponential::Exponential;
 pub use distributions::gamma::Gamma;
 pub use distributions::half_cauchy::HalfCauchy;
 pub use distributions::half_normal::HalfNormal;
+pub use distributions::lkj_corr::LKJCorr;
 pub use distributions::log_normal::LogNormal;
 pub use distributions::multinomial::{log_multinomial_coefficient, Multinomial};
 pub use distributions::multivariate_normal::{

@@ -21,6 +21,7 @@ pub mod half_student_t;
 pub mod hypergeometric;
 pub mod inverse_gamma;
 pub mod laplace;
+pub mod lkj_corr;
 pub mod log_normal;
 pub mod logistic;
 pub mod multinomial;
@@ -56,6 +57,7 @@ pub use half_student_t::HalfStudentT;
 pub use hypergeometric::Hypergeometric;
 pub use inverse_gamma::InverseGamma;
 pub use laplace::Laplace;
+pub use lkj_corr::LKJCorr;
 pub use log_normal::LogNormal;
 pub use logistic::Logistic;
 pub use multinomial::{log_multinomial_coefficient, Multinomial};
@@ -87,6 +89,10 @@ pub enum Support {
     NonNegativeInteger,
     /// Simplex of dimension K (values sum to 1)
     Simplex(usize),
+    /// Cholesky factor of a D x D correlation matrix
+    /// The parameter is the matrix dimension D.
+    /// The number of free parameters is D*(D-1)/2.
+    CorrelationCholesky(usize),
 }
 
 /// Trait for probability distributions with autodiff support

@@ -757,6 +757,77 @@ impl DynamicModel {
                 let log_prob = prob.max(1e-20).ln();
                 Tensor::<WasmBackend, 1>::from_floats([log_prob as f32], &self.device)
             }
+            "LKJCorr" => {
+                // LKJ Correlation distribution on the Cholesky factor of a correlation matrix.
+                // Parameters: dim (matrix dimension D), eta (concentration > 0).
+                // The prior has size = D*(D-1)/2 unconstrained off-diagonal elements of L.
+                //
+                // Since this function is called once per element in the prior's parameter
+                // vector, but the LKJ density is a joint density over all D*(D-1)/2
+                // elements, we compute the full density and divide by size so that the
+                // sum across all element-wise calls yields the correct total.
+                let dim = self.get_param_f64(&spec.params, "dim", 2.0) as usize;
+                let eta = self.get_param_f64(&spec.params, "eta", 1.0);
+                let n_tri = dim * (dim - 1) / 2;
+
+                if n_tri == 0 {
+                    // 1x1 correlation matrix: log density is 0
+                    return Tensor::<WasmBackend, 1>::zeros([1], &self.device);
+                }
+
+                // Find the offset for this prior in all_params
+                let prior_offset = self
+                    .priors
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| std::ptr::eq(*p, spec))
+                    .map(|(idx, _)| self.prior_offsets[idx])
+                    .unwrap_or(0);
+
+                // Extract the full Cholesky off-diagonal slice from all_params
+                let z_slice = all_params.clone().slice([prior_offset..prior_offset + n_tri]);
+                let z_data: Vec<f32> = (0..n_tri)
+                    .map(|k| z_slice.clone().slice([k..k + 1]).into_scalar())
+                    .collect();
+
+                // Reconstruct the Cholesky factor L and compute sum of log(L[i,i])
+                // L is DxD lower triangular with:
+                //   L[i][j] = z_data[k] for j < i (off-diagonal), k in row-major order
+                //   L[i][i] = sqrt(1 - sum_{j<i} L[i][j]^2)
+                let mut log_diag_sum = 0.0_f64;
+                let mut k = 0usize;
+                for i in 0..dim {
+                    let mut row_sq_sum = 0.0_f64;
+                    for _j in 0..i {
+                        let lij = z_data[k] as f64;
+                        row_sq_sum += lij * lij;
+                        k += 1;
+                    }
+                    if i > 0 {
+                        let diag_sq = (1.0 - row_sq_sum).max(1e-20);
+                        let log_diag = 0.5 * diag_sq.ln(); // log(sqrt(1 - sum)) = 0.5*log(1 - sum)
+                        // Weight: (D - i - 1) from Jacobian + 2*(eta - 1) from LKJ density
+                        let weight = (dim as f64 - i as f64 - 1.0) + 2.0 * (eta - 1.0);
+                        log_diag_sum += weight * log_diag;
+                    }
+                }
+
+                // Normalizing constant:
+                // log Z = sum_{k=1}^{D-1} [ k * log(2) + 2 * lnbeta(eta + (D-1-k)/2, eta + (D-1-k)/2) ]
+                // where lnbeta(a, a) = 2*lngamma(a) - lngamma(2a)
+                // Alternative: sum over i=1..D-1 of (D-i-1+2*(eta-1))*E[log L[i,i]] but we need the constant.
+                // log Z = sum_{i=2}^{D} [ (i-1)*log(2) + 2*ln_gamma(eta + (i-2)/2) - ln_gamma(2*eta + i - 2) ]
+                let mut log_normalizer = 0.0_f64;
+                for i in 2..=dim {
+                    let a = eta + (i as f64 - 2.0) / 2.0;
+                    log_normalizer +=
+                        (i as f64 - 1.0) * 2.0_f64.ln() + 2.0 * ln_gamma(a) - ln_gamma(2.0 * a);
+                }
+
+                let full_logp = (log_diag_sum - log_normalizer) as f32;
+                let logp_per_element = full_logp / n_tri as f32;
+                Tensor::<WasmBackend, 1>::from_floats([logp_per_element], &self.device)
+            }
             _ => {
                 // Unknown distribution, return 0
                 Tensor::<WasmBackend, 1>::zeros([1], &self.device)
@@ -1397,6 +1468,103 @@ impl DynamicModel {
                 let log_prob = prob.max(1e-20).ln();
                 (log_prob, 0.0) // Discrete: gradient is 0
             }
+            "LKJCorr" => {
+                // LKJ Correlation distribution (f32 fast path).
+                // Same joint-density-divided-by-size strategy as the tensor path.
+                // For the gradient, we compute d(log_density)/d(z_m) where z_m = value
+                // is one off-diagonal element of the Cholesky factor.
+                let dim = self.get_param_f64(&spec.params, "dim", 2.0) as usize;
+                let eta = self.get_param_f64(&spec.params, "eta", 1.0);
+                let n_tri = dim * (dim - 1) / 2;
+
+                if n_tri == 0 {
+                    return (0.0, 0.0);
+                }
+
+                // Find offset for this prior
+                let prior_offset = self
+                    .priors
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| std::ptr::eq(*p, spec))
+                    .map(|(idx, _)| self.prior_offsets[idx])
+                    .unwrap_or(0);
+
+                let z: Vec<f64> = (0..n_tri)
+                    .map(|k| all_params[prior_offset + k] as f64)
+                    .collect();
+
+                // Determine which element index m this value corresponds to
+                // (find which z[m] == value)
+                let m = (0..n_tri)
+                    .find(|&k| (all_params[prior_offset + k] - value).abs() < 1e-30)
+                    .unwrap_or(0);
+
+                // Reconstruct Cholesky factor and compute log density + gradient
+                // Build row-squared-sums and diagonal entries
+                let mut row_sq_sum = vec![0.0_f64; dim];
+                let mut diag_sq = vec![1.0_f64; dim]; // L[i,i]^2
+                let mut k = 0usize;
+                for i in 0..dim {
+                    let mut sq_sum = 0.0_f64;
+                    for _j in 0..i {
+                        sq_sum += z[k] * z[k];
+                        k += 1;
+                    }
+                    row_sq_sum[i] = sq_sum;
+                    if i > 0 {
+                        diag_sq[i] = (1.0 - sq_sum).max(1e-20);
+                    }
+                }
+
+                // Compute full log density
+                let mut log_diag_sum = 0.0_f64;
+                for i in 1..dim {
+                    let weight = (dim as f64 - i as f64 - 1.0) + 2.0 * (eta - 1.0);
+                    log_diag_sum += weight * 0.5 * diag_sq[i].ln();
+                }
+
+                // Normalizing constant
+                let mut log_normalizer = 0.0_f64;
+                for i in 2..=dim {
+                    let a = eta + (i as f64 - 2.0) / 2.0;
+                    log_normalizer +=
+                        (i as f64 - 1.0) * 2.0_f64.ln() + 2.0 * ln_gamma(a) - ln_gamma(2.0 * a);
+                }
+
+                let full_logp = log_diag_sum - log_normalizer;
+                let logp_per_element = full_logp / n_tri as f64;
+
+                // Gradient: d(log_density)/d(z_m) where z_m = L[row_m][col_m]
+                // log_density includes weight_i * 0.5 * ln(1 - sum_{j<i} z_{ij}^2) for the row
+                // containing z_m. The derivative is:
+                //   weight_row * 0.5 * (-2 * z_m) / (1 - row_sq_sum[row])
+                //   = -weight_row * z_m / diag_sq[row]
+                // We divide the gradient by n_tri to match the per-element log_prob.
+
+                // Find which row this element belongs to
+                let mut row_of_m = 0usize;
+                let mut cumulative = 0usize;
+                for i in 1..dim {
+                    if m < cumulative + i {
+                        row_of_m = i;
+                        break;
+                    }
+                    cumulative += i;
+                }
+                if row_of_m == 0 && dim > 1 {
+                    row_of_m = dim - 1; // last row
+                }
+
+                let weight_row =
+                    (dim as f64 - row_of_m as f64 - 1.0) + 2.0 * (eta - 1.0);
+                let z_m = value as f64;
+                let grad = -weight_row * z_m / diag_sq[row_of_m];
+                // Divide by n_tri to match per-element log_prob
+                let grad_per_element = grad / n_tri as f64;
+
+                (logp_per_element, grad_per_element)
+            }
             _ => (0.0, 0.0),
         }
     }
@@ -1699,6 +1867,11 @@ fn generate_inits(
                         // Clamp to (low, high) range
                         loc.clamp(low + 0.01, high - 0.01)
                             + 0.01 * (chain_idx as f32 - num_chains as f32 / 2.0)
+                    }
+                    "LKJCorr" => {
+                        // LKJ Cholesky: off-diagonal elements of L near 0
+                        // (identity correlation matrix). Small perturbation per chain.
+                        0.01 * (chain_idx as f32 - num_chains as f32 / 2.0)
                     }
                     "NegativeBinomial"
                     | "Geometric"

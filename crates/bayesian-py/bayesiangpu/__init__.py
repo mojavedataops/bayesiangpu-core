@@ -59,6 +59,7 @@ from bayesiangpu._core import (
     multivariate_normal as MultivariateNormal,
     dirichlet as Dirichlet,
     multinomial as Multinomial,
+    lkj_corr as LKJCorr,
     # Distribution factories - likelihoods
     bernoulli as Bernoulli,
     binomial as Binomial,
@@ -220,6 +221,7 @@ __all__ = [
     "MultivariateNormal",
     "Dirichlet",
     "Multinomial",
+    "LKJCorr",
     # Likelihoods
     "Bernoulli",
     "Binomial",

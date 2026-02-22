@@ -628,6 +628,31 @@ OrderedLogistic <- function(eta, cutpoints) {
   structure(result, class = c("bg_distribution", "character"))
 }
 
+#' LKJ Correlation Distribution
+#'
+#' Create an LKJ prior for correlation matrices, parameterized by
+#' concentration parameter eta. The LKJ distribution (Lewandowski, Kurowicka,
+#' and Joe, 2009) is the standard prior for correlation matrices in Bayesian
+#' hierarchical models.
+#'
+#' @param dim Integer. Dimension of the correlation matrix (>= 2).
+#' @param eta Numeric. Concentration parameter (> 0).
+#'   eta = 1: uniform over valid correlation matrices.
+#'   eta > 1: concentrates toward identity (less correlation).
+#'   eta < 1: concentrates toward extreme correlations.
+#' @return A distribution specification
+#' @export
+#' @examples
+#' \donttest{
+#' LKJCorr(3, 2.0)  # 3x3 correlation matrix, slightly favoring identity
+#' LKJCorr(4, 1.0)  # 4x4, uniform over correlation matrices
+#' }
+LKJCorr <- function(dim, eta = 1.0) {
+  stopifnot(is.numeric(dim), dim >= 2, is.numeric(eta), eta > 0)
+  result <- lkj_corr_dist(as.integer(dim), eta)
+  structure(result, class = c("bg_distribution", "character"))
+}
+
 #' Create a Linear Predictor for regression models
 #'
 #' Computes X \%*\% beta during log_prob evaluation. The design matrix X

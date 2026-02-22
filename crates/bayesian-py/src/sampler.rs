@@ -528,6 +528,84 @@ impl DynamicModel {
                 let logp = prob.max(1e-20).ln();
                 self.scalar_tensor(logp)
             }
+            "LKJCorr" => {
+                // LKJ Correlation prior over correlation matrices.
+                //
+                // The parameter slice contains D*(D-1)/2 unconstrained values z[k].
+                // We transform them to a Cholesky factor L of a correlation matrix
+                // using partial correlations (tanh transform), then compute:
+                //
+                //   log p(z) = sum_{i=1}^{D-1} (D-i-1 + 2*(eta-1)) * log(L[i,i])
+                //              + sum_k log(1 - tanh(z[k])^2)   [Jacobian of tanh]
+                //
+                // All operations use tensors to preserve the autodiff graph.
+
+                let dim = self.get_f64_param(&dist.params, "dim") as usize;
+                let eta = self.get_f64_param(&dist.params, "eta");
+                let n_params = dim * (dim - 1) / 2;
+
+                if value.dims()[0] != n_params {
+                    return Tensor::<PyBackend, 1>::zeros([1], &self.device);
+                }
+
+                // Compute tanh of all unconstrained values (stays in autodiff graph)
+                let tanh_vals = value.clone().tanh();
+
+                // Jacobian of tanh: sum log(1 - tanh(z)^2)
+                let ones = Tensor::<PyBackend, 1>::ones([n_params], &self.device);
+                let tanh_sq = tanh_vals.clone() * tanh_vals.clone();
+                let log_jac = (ones - tanh_sq.clone() + self.scalar_tensor(1e-30)).log().sum();
+
+                // Build Cholesky factor L from partial correlations.
+                // We need the tanh values as scalars for indexing, but keep
+                // the computation graph connected through the diagonal log terms.
+                //
+                // Strategy: extract tanh values for matrix construction (breaks graph),
+                // but recompute L[i,i] via tensor ops for the density term.
+                let tanh_data: Vec<f32> = tanh_vals.clone().into_data().to_vec().unwrap();
+
+                // Build L matrix in f64 for precision
+                let mut l_matrix = vec![vec![0.0f64; dim]; dim];
+                l_matrix[0][0] = 1.0;
+                let mut k = 0usize;
+                #[allow(clippy::needless_range_loop)]
+                for i in 1..dim {
+                    let mut remaining = 1.0f64;
+                    for j in 0..i {
+                        l_matrix[i][j] = tanh_data[k] as f64 * remaining.sqrt();
+                        remaining -= l_matrix[i][j] * l_matrix[i][j];
+                        remaining = remaining.max(0.0);
+                        k += 1;
+                    }
+                    l_matrix[i][i] = remaining.sqrt();
+                }
+
+                // Reconstruct diagonal L[i,i] via tensor ops for autodiff.
+                // L[i,i] = sqrt(1 - sum_{j<i} L[i,j]^2)
+                // L[i,j] = tanh_z[k] * sqrt(remaining_so_far)
+                // We build remaining_so_far as a tensor chain.
+                let mut log_density = Tensor::<PyBackend, 1>::zeros([1], &self.device);
+                let mut idx = 0usize;
+                for i in 1..dim {
+                    let exponent = (dim as f64 - i as f64 - 1.0) + 2.0 * (eta - 1.0);
+                    // Build remaining = 1 - sum L[i,j]^2 using tensors
+                    let mut remaining_t = self.scalar_tensor(1.0);
+                    for _j in 0..i {
+                        #[allow(clippy::single_range_in_vec_init)]
+                        let t_k = tanh_vals.clone().slice([idx..idx + 1]);
+                        // L[i,j] = t_k * sqrt(remaining), so L[i,j]^2 = t_k^2 * remaining
+                        let l_sq = t_k.clone() * t_k * remaining_t.clone();
+                        remaining_t = remaining_t - l_sq;
+                        idx += 1;
+                    }
+                    // L[i,i] = sqrt(remaining), log(L[i,i]) = 0.5 * log(remaining)
+                    let clamped = remaining_t.clamp_min(1e-30);
+                    let log_diag = clamped.log() * self.scalar_tensor(0.5);
+                    log_density = log_density + log_diag * self.scalar_tensor(exponent);
+                }
+
+                log_density + log_jac
+            }
             "Categorical" => {
                 // Categorical as prior: return 0 (improper uniform) as fallback
                 Tensor::<PyBackend, 1>::zeros([1], &self.device)
@@ -724,7 +802,8 @@ impl DynamicModel {
                 Support::Positive
             }
             "Beta" | "Uniform" => Support::UnitInterval,
-            "NegativeBinomial"
+            "LKJCorr"
+            | "NegativeBinomial"
             | "Categorical"
             | "Geometric"
             | "DiscreteUniform"
@@ -750,6 +829,16 @@ impl BayesianModel<PyBackend> for DynamicModel {
         for (i, prior) in self.spec.priors.iter().enumerate() {
             let offset = self.prior_offsets[i];
             let size = self.prior_sizes[i];
+
+            // Multivariate distributions that need the full parameter slice
+            if prior.distribution.dist_type == "LKJCorr" {
+                #[allow(clippy::single_range_in_vec_init)]
+                let param_slice = params.clone().slice([offset..offset + size]);
+                let logp = self.compute_prior_logp(&prior.distribution, &param_slice, params);
+                total_logp = total_logp + logp;
+                continue;
+            }
+
             for j in 0..size {
                 #[allow(clippy::single_range_in_vec_init)]
                 let param_value = params.clone().slice([offset + j..offset + j + 1]);

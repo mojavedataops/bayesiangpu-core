@@ -578,6 +578,17 @@ fn ordered_logistic_dist(eta: f64, cutpoints: Robj) -> String {
         .to_string()
 }
 
+/// Create an LKJ Correlation distribution specification
+///
+/// @param dim Dimension of the correlation matrix (>= 2)
+/// @param eta Concentration parameter (> 0)
+/// @return JSON string with distribution specification
+/// @export
+#[extendr]
+fn lkj_corr_dist(dim: i32, eta: f64) -> String {
+    serde_json::json!({"dist_type": "LKJCorr", "params": {"dim": dim, "eta": eta}}).to_string()
+}
+
 /// Helper function to parse a matrix from R (matrix or list of lists)
 fn parse_matrix(obj: &Robj) -> Vec<Vec<f64>> {
     // Try as a matrix first
@@ -1261,6 +1272,7 @@ extendr_module! {
     fn zero_inflated_neg_binomial_dist;
     fn hypergeometric_dist;
     fn ordered_logistic_dist;
+    fn lkj_corr_dist;
     fn run_nuts_sampling;
     fn run_advi;
 }
