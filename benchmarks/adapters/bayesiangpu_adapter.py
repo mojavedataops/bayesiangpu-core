@@ -34,10 +34,10 @@ class BayesianGPUAdapter(FrameworkAdapter):
                                num_warmup=num_warmup, num_chains=num_chains,
                                seed=seed)
 
-        # Extract samples
+        # Extract full sample chains for ESS computation
         samples = {}
-        for name in model.param_names:
-            samples[name] = [result.summarize(name).mean]  # Simplified
+        for name in result.param_names:
+            samples[name] = np.array(result.get_samples(name))
 
         ess_vals = compute_ess(samples, num_chains) if samples else {}
         min_e = min_ess(ess_vals) if ess_vals else 0.0
