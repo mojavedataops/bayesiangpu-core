@@ -1,0 +1,7 @@
+pymc>=5.0
+numpyro>=0.13
+jax[cpu]
+cmdstanpy
+arviz
+matplotlib
+numpy
