@@ -509,7 +509,7 @@ mod tests {
         // All samples should be in [0, 1)
         for &sample in &data {
             assert!(
-                sample >= 0.0 && sample < 1.0,
+                (0.0..1.0).contains(&sample),
                 "Sample {} out of range [0, 1)",
                 sample
             );

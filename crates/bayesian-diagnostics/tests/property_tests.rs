@@ -69,7 +69,7 @@ proptest! {
         // R-hat should be close to 1.0 for converged chains
         // Allow some tolerance due to finite samples
         prop_assert!(
-            r >= 0.9 && r <= 1.2,
+            (0.9..=1.2).contains(&r),
             "R-hat for converged chains should be near 1.0, got {}",
             r
         );
@@ -134,7 +134,7 @@ proptest! {
         let r = rhat_rank_normalized(&chains);
 
         prop_assert!(
-            r >= 0.9 && r <= 1.2,
+            (0.9..=1.2).contains(&r),
             "Rank R-hat for converged chains should be near 1.0, got {}",
             r
         );

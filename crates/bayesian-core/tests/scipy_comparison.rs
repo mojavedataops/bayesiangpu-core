@@ -27,7 +27,7 @@ fn test_dirichlet_against_scipy() {
         let dirichlet = Dirichlet::new(alpha);
         let x = Tensor::from_floats([0.2, 0.3, 0.5], &device);
         let log_prob: f32 = dirichlet.log_prob(&x).into_scalar().elem();
-        let expected = 0.693147180559949_f32;
+        let expected = std::f32::consts::LN_2;
         assert!(
             (log_prob - expected).abs() < 1e-4,
             "Uniform Dirichlet: expected {}, got {}",
@@ -42,7 +42,7 @@ fn test_dirichlet_against_scipy() {
         let dirichlet = Dirichlet::new(alpha);
         let x = Tensor::from_floats([0.3, 0.35, 0.35], &device);
         let log_prob: f32 = dirichlet.log_prob(&x).into_scalar().elem();
-        let expected = 2.4425914784016847_f32;
+        let expected = 2.442_591_4_f32;
         assert!(
             (log_prob - expected).abs() < 1e-3,
             "Concentrated Dirichlet: expected ~{}, got {}",
@@ -57,7 +57,7 @@ fn test_dirichlet_against_scipy() {
         let dirichlet = Dirichlet::new(alpha);
         let x = Tensor::from_floats([0.1, 0.3, 0.6], &device);
         let log_prob: f32 = dirichlet.log_prob(&x).into_scalar().elem();
-        let expected = 1.8687205103641853_f32;
+        let expected = 1.868_720_5_f32;
         assert!(
             (log_prob - expected).abs() < 1e-4,
             "Asymmetric Dirichlet: expected {}, got {}",
@@ -81,7 +81,7 @@ fn test_multinomial_against_scipy() {
         let multinomial = Multinomial::new(10, probs);
         let x = Tensor::from_floats([2.0, 3.0, 5.0], &device);
         let log_prob: f32 = multinomial.log_prob(&x).into_scalar().elem();
-        let expected = -2.464515960140268_f32;
+        let expected = -2.464_516_f32;
         assert!(
             (log_prob - expected).abs() < 1e-4,
             "Simple Multinomial: expected {}, got {}",
@@ -97,7 +97,7 @@ fn test_multinomial_against_scipy() {
         let multinomial = Multinomial::new(6, probs);
         let x = Tensor::from_floats([2.0, 2.0, 2.0], &device);
         let log_prob: f32 = multinomial.log_prob(&x).into_scalar().elem();
-        let expected = -2.091864061678394_f32;
+        let expected = -2.091_864_f32;
         assert!(
             (log_prob - expected).abs() < 1e-3,
             "Uniform Multinomial: expected ~{}, got {}",
@@ -113,7 +113,7 @@ fn test_multinomial_against_scipy() {
         let x = Tensor::from_floats([5.0, 0.0, 0.0], &device);
         let log_prob: f32 = multinomial.log_prob(&x).into_scalar().elem();
         // log(0.8^5) = 5 * log(0.8) = -1.1157...
-        let expected = -1.1157177565710468_f32;
+        let expected = -1.115_717_8_f32;
         assert!(
             (log_prob - expected).abs() < 1e-3,
             "All one category: expected ~{}, got {}",
@@ -129,7 +129,7 @@ fn test_dirichlet_beta_consistency() {
     let device = Default::default();
 
     // Test several parameter combinations
-    let test_cases = vec![
+    let test_cases: Vec<([f64; 2], [f64; 2])> = vec![
         ([1.0, 1.0], [0.3, 0.7]),
         ([2.0, 5.0], [0.2, 0.8]),
         ([0.5, 0.5], [0.1, 0.9]),
@@ -144,9 +144,9 @@ fn test_dirichlet_beta_consistency() {
 
         // Compute Beta(a, b) at x[0] using formula
         // log_prob = (a-1)*log(x) + (b-1)*log(1-x) - log(B(a,b))
-        let a = alpha[0] as f64;
-        let b = alpha[1] as f64;
-        let x_val = x[0] as f64;
+        let a = alpha[0];
+        let b = alpha[1];
+        let x_val = x[0];
         let ln_beta = bayesian_core::ln_beta(a, b);
         let log_prob_beta = (a - 1.0) * x_val.ln() + (b - 1.0) * (1.0 - x_val).ln() - ln_beta;
 

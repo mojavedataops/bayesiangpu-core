@@ -8,6 +8,7 @@
 //!
 //! Run with:
 //!   cargo run --example eight_schools -p bayesian-sampler
+#![allow(clippy::single_range_in_vec_init)]
 
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::{Autodiff, NdArray};

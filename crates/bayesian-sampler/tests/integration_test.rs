@@ -3,6 +3,7 @@
 //! Tests end-to-end sampling with:
 //! - Simple models with known posteriors
 //! - Multi-chain sampling
+#![allow(clippy::single_range_in_vec_init)]
 //! - Adaptation and warmup
 //! - Diagnostic computation
 

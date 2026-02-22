@@ -8,6 +8,7 @@
 //! Data:
 //!   y     = [28, 8, -3, 7, -1, 1, 18, 12]
 //!   sigma = [15, 10, 16, 11, 9, 11, 10, 18]
+#![allow(clippy::single_range_in_vec_init, clippy::needless_range_loop)]
 
 use burn::backend::ndarray::NdArrayDevice;
 use burn::backend::{Autodiff, NdArray};

@@ -58,13 +58,12 @@ fn bench_leapfrog_step(c: &mut Criterion) {
             let step_size = 0.1;
 
             b.iter(|| {
-                let result = leapfrog_step(
+                leapfrog_step(
                     black_box(&model),
                     black_box(position.clone()),
                     black_box(momentum.clone()),
                     black_box(step_size),
-                );
-                result
+                )
             });
         });
     }
@@ -91,10 +90,7 @@ fn bench_hmc_sampling(c: &mut Criterion) {
             let init_params = Tensor::<TestBackend, 1>::zeros([dim], &device);
             let mut sampler = HmcSampler::new(model, config, rng);
 
-            b.iter(|| {
-                let result = sampler.sample(black_box(init_params.clone()));
-                result
-            });
+            b.iter(|| sampler.sample(black_box(init_params.clone())));
         });
     }
 
