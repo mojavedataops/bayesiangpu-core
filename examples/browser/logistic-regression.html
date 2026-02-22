@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logistic Regression - BayesianGPU</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    h2 { color: #444; margin-top: 0; }
+    h3 { color: #555; }
+    #status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .running { background: #fff3cd; color: #856404; }
+    .complete { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th { background: #f8f9fa; }
+    .data-table {
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 700px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Bayesian Logistic Regression</h1>
+
+  <div class="container">
+    <h2>Model</h2>
+    <pre>
+y ~ Bernoulli(p)
+p = sigmoid(beta_0 * x1 + beta_1 * x2)
+
+Priors:
+  beta_0 ~ Normal(0, 2.5)
+  beta_1 ~ Normal(0, 2.5)
+
+Synthetic data: 100 observations, 2 predictors
+True coefficients: beta_0 = 1.5, beta_1 = -2.0
+    </pre>
+    <button id="runBtn" onclick="runInference()">Run Inference</button>
+    <div id="status"></div>
+  </div>
+
+  <div class="two-col">
+    <div class="container">
+      <h2>Synthetic Data (first 20 rows)</h2>
+      <div id="dataPreview" class="data-table">Generating data...</div>
+    </div>
+    <div class="container">
+      <h2>Data Summary</h2>
+      <div id="dataSummary"></div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Results</h2>
+    <div id="results">Click "Run Inference" to see results...</div>
+  </div>
+
+  <script type="module">
+    // -----------------------------------------------------------
+    // Synthetic data generation
+    // -----------------------------------------------------------
+    // Simple seeded PRNG (Mulberry32)
+    function mulberry32(seed) {
+      return function() {
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // Box-Muller transform for normal variates
+    function randn(rng) {
+      const u1 = rng();
+      const u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    const rng = mulberry32(42);
+    const N = 100;
+    const trueBeta0 = 1.5;
+    const trueBeta1 = -2.0;
+
+    const x1 = [], x2 = [], y = [];
+    const predictors = [];
+
+    for (let i = 0; i < N; i++) {
+      const xi1 = randn(rng);
+      const xi2 = randn(rng);
+      x1.push(xi1);
+      x2.push(xi2);
+      const logit = trueBeta0 * xi1 + trueBeta1 * xi2;
+      const p = 1 / (1 + Math.exp(-logit));
+      const yi = rng() < p ? 1.0 : 0.0;
+      y.push(yi);
+      predictors.push([xi1, xi2]);
+    }
+
+    const nPositive = y.filter(v => v === 1.0).length;
+    const nNegative = N - nPositive;
+
+    // Show data preview
+    let previewHtml = '<table><tr><th>#</th><th>x1</th><th>x2</th><th>y</th></tr>';
+    for (let i = 0; i < 20; i++) {
+      previewHtml += `<tr><td>${i+1}</td><td>${x1[i].toFixed(3)}</td><td>${x2[i].toFixed(3)}</td><td>${y[i]}</td></tr>`;
+    }
+    previewHtml += '</table>';
+    document.getElementById('dataPreview').innerHTML = previewHtml;
+
+    // Show data summary
+    document.getElementById('dataSummary').innerHTML = `
+      <table>
+        <tr><td>Observations</td><td>${N}</td></tr>
+        <tr><td>Positive (y=1)</td><td>${nPositive}</td></tr>
+        <tr><td>Negative (y=0)</td><td>${nNegative}</td></tr>
+        <tr><td>True beta_0</td><td>${trueBeta0}</td></tr>
+        <tr><td>True beta_1</td><td>${trueBeta1}</td></tr>
+        <tr><td>x1 mean</td><td>${(x1.reduce((a,b)=>a+b,0)/N).toFixed(3)}</td></tr>
+        <tr><td>x2 mean</td><td>${(x2.reduce((a,b)=>a+b,0)/N).toFixed(3)}</td></tr>
+      </table>
+    `;
+
+    console.log('Synthetic data generated:', { N, nPositive, nNegative, trueBeta0, trueBeta1 });
+
+    // -----------------------------------------------------------
+    // Inference
+    // -----------------------------------------------------------
+    window.runInference = async function() {
+      const status = document.getElementById('status');
+      const btn = document.getElementById('runBtn');
+
+      status.className = 'running';
+      status.textContent = 'Loading WASM module...';
+      btn.disabled = true;
+
+      try {
+        // Import and initialize BayesianGPU WASM
+        const wasm = await import('../../js/pkg/bayesian_wasm.js');
+        await wasm.default();
+        wasm.init();
+
+        console.log('BayesianGPU version:', wasm.version());
+
+        status.textContent = 'Running MCMC sampling (this may take a moment)...';
+
+        // Build model spec for run_logistic_regression
+        const modelSpec = {
+          predictors: predictors,
+          response: y,
+          coefPriorScale: 2.5
+        };
+
+        const config = {
+          numSamples: 1000,
+          numWarmup: 500,
+          numChains: 4,
+          targetAccept: 0.8,
+          seed: 123
+        };
+
+        console.log('Model spec:', JSON.stringify(modelSpec).slice(0, 200) + '...');
+        console.log('Config:', JSON.stringify(config));
+
+        // Run logistic regression via dedicated WASM function
+        const t0 = performance.now();
+        const resultJson = wasm.run_logistic_regression(
+          JSON.stringify(modelSpec),
+          JSON.stringify(config)
+        );
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+        const result = JSON.parse(resultJson);
+
+        console.log('Inference result:', result);
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        // Compute summary statistics
+        function summarize(samples) {
+          const n = samples.length;
+          const sorted = [...samples].sort((a, b) => a - b);
+          const mean = samples.reduce((a, b) => a + b, 0) / n;
+          const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1);
+          const sd = Math.sqrt(variance);
+          const q05 = sorted[Math.floor(n * 0.05)];
+          const q95 = sorted[Math.floor(n * 0.95)];
+          const median = sorted[Math.floor(n * 0.5)];
+          return { mean, sd, median, q05, q95 };
+        }
+
+        const beta0Samples = result.samples.beta_0 || [];
+        const beta1Samples = result.samples.beta_1 || [];
+
+        const beta0Stats = summarize(beta0Samples);
+        const beta1Stats = summarize(beta1Samples);
+
+        const rhatBeta0 = result.diagnostics?.rhat?.beta_0;
+        const rhatBeta1 = result.diagnostics?.rhat?.beta_1;
+        const essBeta0 = result.diagnostics?.ess?.beta_0;
+        const essBeta1 = result.diagnostics?.ess?.beta_1;
+        const divergences = result.diagnostics?.divergences || 0;
+
+        // Display results
+        document.getElementById('results').innerHTML = `
+          <h3>Parameter Estimates</h3>
+          <table>
+            <tr>
+              <th>Parameter</th><th>True</th><th>Mean</th><th>SD</th>
+              <th>Median</th><th>5%</th><th>95%</th><th>R-hat</th><th>ESS</th>
+            </tr>
+            <tr>
+              <td>beta_0</td>
+              <td>${trueBeta0.toFixed(2)}</td>
+              <td>${beta0Stats.mean.toFixed(3)}</td>
+              <td>${beta0Stats.sd.toFixed(3)}</td>
+              <td>${beta0Stats.median.toFixed(3)}</td>
+              <td>${beta0Stats.q05.toFixed(3)}</td>
+              <td>${beta0Stats.q95.toFixed(3)}</td>
+              <td>${rhatBeta0 !== undefined ? rhatBeta0.toFixed(3) : 'N/A'}</td>
+              <td>${essBeta0 !== undefined ? essBeta0.toFixed(0) : 'N/A'}</td>
+            </tr>
+            <tr>
+              <td>beta_1</td>
+              <td>${trueBeta1.toFixed(2)}</td>
+              <td>${beta1Stats.mean.toFixed(3)}</td>
+              <td>${beta1Stats.sd.toFixed(3)}</td>
+              <td>${beta1Stats.median.toFixed(3)}</td>
+              <td>${beta1Stats.q05.toFixed(3)}</td>
+              <td>${beta1Stats.q95.toFixed(3)}</td>
+              <td>${rhatBeta1 !== undefined ? rhatBeta1.toFixed(3) : 'N/A'}</td>
+              <td>${essBeta1 !== undefined ? essBeta1.toFixed(0) : 'N/A'}</td>
+            </tr>
+          </table>
+
+          <h3>Diagnostics</h3>
+          <table>
+            <tr><td>Chains</td><td>${config.numChains}</td></tr>
+            <tr><td>Samples per chain</td><td>${config.numSamples}</td></tr>
+            <tr><td>Warmup per chain</td><td>${config.numWarmup}</td></tr>
+            <tr><td>Total post-warmup samples</td><td>${beta0Samples.length}</td></tr>
+            <tr><td>Divergences</td><td>${divergences}</td></tr>
+            <tr><td>Sampling time</td><td>${elapsed}s</td></tr>
+          </table>
+
+          <h3>Interpretation</h3>
+          <p>
+            The posterior mean for <strong>beta_0</strong> is ${beta0Stats.mean.toFixed(3)}
+            (true value: ${trueBeta0}), and for <strong>beta_1</strong> is ${beta1Stats.mean.toFixed(3)}
+            (true value: ${trueBeta1}).
+            ${Math.abs(beta0Stats.mean - trueBeta0) < 1.0 && Math.abs(beta1Stats.mean - trueBeta1) < 1.0
+              ? 'The posterior estimates are within a reasonable range of the true values.'
+              : 'With more data or longer sampling, the estimates should converge closer to the true values.'}
+          </p>
+        `;
+
+        status.className = 'complete';
+        status.textContent = `Inference complete in ${elapsed}s. ${beta0Samples.length} samples drawn from ${config.numChains} chains.`;
+
+      } catch (error) {
+        console.error('Inference error:', error);
+        status.className = 'error';
+        status.textContent = 'Error: ' + error.message;
+        document.getElementById('results').innerHTML = `<pre>Error: ${error.message}\n\n${error.stack || ''}</pre>`;
+      }
+
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

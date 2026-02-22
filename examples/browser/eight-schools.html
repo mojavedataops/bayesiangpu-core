@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eight Schools - BayesianGPU</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    h2 { color: #444; margin-top: 0; }
+    h3 { color: #555; }
+    #status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .running { background: #fff3cd; color: #856404; }
+    .complete { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th { background: #f8f9fa; }
+    .bar-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .bar {
+      height: 18px;
+      background: #007bff;
+      border-radius: 3px;
+      min-width: 2px;
+    }
+    .bar-neg {
+      background: #dc3545;
+    }
+    .ci-bar {
+      height: 6px;
+      background: #aaa;
+      border-radius: 3px;
+      position: relative;
+    }
+    .school-chart {
+      margin-top: 15px;
+    }
+    .school-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+    .school-label {
+      width: 80px;
+      text-align: right;
+      padding-right: 10px;
+      font-weight: 500;
+    }
+    .school-bar-area {
+      flex: 1;
+      position: relative;
+      height: 24px;
+    }
+    .school-ci {
+      position: absolute;
+      height: 4px;
+      background: #ccc;
+      top: 10px;
+      border-radius: 2px;
+    }
+    .school-mean {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      background: #007bff;
+      border-radius: 50%;
+      top: 7px;
+      transform: translateX(-5px);
+    }
+    .school-observed {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      background: none;
+      border: 2px solid #dc3545;
+      border-radius: 50%;
+      top: 7px;
+      transform: translateX(-5px);
+    }
+    .legend {
+      display: flex;
+      gap: 20px;
+      margin-top: 10px;
+      font-size: 13px;
+      color: #666;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .legend-dot-blue {
+      width: 10px; height: 10px;
+      background: #007bff; border-radius: 50%;
+    }
+    .legend-dot-red {
+      width: 8px; height: 8px;
+      background: none; border: 2px solid #dc3545; border-radius: 50%;
+    }
+    .legend-line-gray {
+      width: 20px; height: 4px;
+      background: #ccc; border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Eight Schools Hierarchical Model</h1>
+
+  <div class="container">
+    <h2>Model</h2>
+    <pre>
+The Eight Schools problem (Rubin, 1981):
+Eight schools each implemented a coaching program. The observed treatment
+effects (y_j) and their standard errors (se_j) are given.
+
+Hierarchical model:
+  y_j ~ Normal(alpha_j, sigma_j)      [known sigma_j = se_j]
+  alpha_j ~ Normal(mu, tau)            [school-level effects]
+  mu ~ Normal(0, 10)                   [population mean]
+  tau ~ HalfNormal(5)                  [between-school std dev]
+
+This uses run_hierarchical_model() with an intercept-only specification.
+    </pre>
+
+    <h3>Data</h3>
+    <table>
+      <tr>
+        <th>School</th>
+        <th>A</th><th>B</th><th>C</th><th>D</th>
+        <th>E</th><th>F</th><th>G</th><th>H</th>
+      </tr>
+      <tr>
+        <td>Effect (y)</td>
+        <td>28</td><td>8</td><td>-3</td><td>7</td>
+        <td>-1</td><td>1</td><td>18</td><td>12</td>
+      </tr>
+      <tr>
+        <td>SE (sigma)</td>
+        <td>15</td><td>10</td><td>16</td><td>11</td>
+        <td>9</td><td>11</td><td>10</td><td>18</td>
+      </tr>
+    </table>
+
+    <p style="margin-top: 15px;">
+      <button id="runBtn" onclick="runInference()">Run Inference</button>
+    </p>
+    <div id="status"></div>
+  </div>
+
+  <div class="container">
+    <h2>School-Level Estimates</h2>
+    <div id="schoolChart">Run inference to see the shrinkage chart...</div>
+  </div>
+
+  <div class="container">
+    <h2>Results</h2>
+    <div id="results">Click "Run Inference" to see results...</div>
+  </div>
+
+  <script type="module">
+    // -----------------------------------------------------------
+    // Eight Schools data (Rubin, 1981)
+    // -----------------------------------------------------------
+    const schoolNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const y = [28, 8, -3, 7, -1, 1, 18, 12];
+    const se = [15, 10, 16, 11, 9, 11, 10, 18];
+    const J = 8;
+
+    console.log('Eight Schools data:', { y, se });
+
+    // -----------------------------------------------------------
+    // Inference
+    // -----------------------------------------------------------
+    window.runInference = async function() {
+      const status = document.getElementById('status');
+      const btn = document.getElementById('runBtn');
+
+      status.className = 'running';
+      status.textContent = 'Loading WASM module...';
+      btn.disabled = true;
+
+      try {
+        // Import and initialize BayesianGPU WASM
+        const wasm = await import('../../js/pkg/bayesian_wasm.js');
+        await wasm.default();
+        wasm.init();
+
+        console.log('BayesianGPU version:', wasm.version());
+
+        status.textContent = 'Running MCMC sampling for hierarchical model...';
+
+        // Build the hierarchical model spec.
+        // In the Eight Schools model, each school is a group.
+        // Each school has one observation, so groupIds maps each obs to its school.
+        const modelSpec = {
+          groupIds: [0, 1, 2, 3, 4, 5, 6, 7],
+          predictors: [],   // intercept-only model
+          response: y.map(v => v * 1.0),
+          numGroups: J,
+          muAlphaPriorScale: 10.0,
+          sigmaAlphaPriorScale: 5.0,
+          sigmaPriorScale: 10.0   // large because se ranges from 9-18
+        };
+
+        const config = {
+          numSamples: 1000,
+          numWarmup: 500,
+          numChains: 4,
+          targetAccept: 0.85,
+          seed: 42
+        };
+
+        console.log('Model spec:', JSON.stringify(modelSpec));
+        console.log('Config:', JSON.stringify(config));
+
+        const t0 = performance.now();
+        const resultJson = wasm.run_hierarchical_model(
+          JSON.stringify(modelSpec),
+          JSON.stringify(config)
+        );
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+        const result = JSON.parse(resultJson);
+
+        console.log('Inference result:', result);
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        // -----------------------------------------------------------
+        // Summary statistics helper
+        // -----------------------------------------------------------
+        function summarize(samples) {
+          if (!samples || samples.length === 0) return null;
+          const n = samples.length;
+          const sorted = [...samples].sort((a, b) => a - b);
+          const mean = samples.reduce((a, b) => a + b, 0) / n;
+          const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1);
+          const sd = Math.sqrt(variance);
+          const q05 = sorted[Math.floor(n * 0.05)];
+          const q25 = sorted[Math.floor(n * 0.25)];
+          const q50 = sorted[Math.floor(n * 0.50)];
+          const q75 = sorted[Math.floor(n * 0.75)];
+          const q95 = sorted[Math.floor(n * 0.95)];
+          return { mean, sd, q05, q25, q50, q75, q95 };
+        }
+
+        // Extract parameter summaries
+        const muAlpha = summarize(result.samples.mu_alpha);
+        const sigmaAlpha = summarize(result.samples.sigma_alpha);
+        const sigma = summarize(result.samples.sigma);
+
+        const schoolStats = [];
+        for (let j = 0; j < J; j++) {
+          const key = `alpha_${j}`;
+          schoolStats.push({
+            name: schoolNames[j],
+            observed: y[j],
+            se: se[j],
+            stats: summarize(result.samples[key]),
+            rhat: result.diagnostics?.rhat?.[key],
+            ess: result.diagnostics?.ess?.[key]
+          });
+        }
+
+        // -----------------------------------------------------------
+        // Shrinkage chart
+        // -----------------------------------------------------------
+        // Find range for chart scaling
+        let allVals = [];
+        schoolStats.forEach(s => {
+          if (s.stats) {
+            allVals.push(s.stats.q05, s.stats.q95);
+          }
+          allVals.push(s.observed);
+        });
+        const chartMin = Math.min(...allVals) - 5;
+        const chartMax = Math.max(...allVals) + 5;
+        const chartRange = chartMax - chartMin;
+
+        function toPercent(val) {
+          return ((val - chartMin) / chartRange * 100).toFixed(1);
+        }
+
+        let chartHtml = '<div class="school-chart">';
+        schoolStats.forEach(s => {
+          if (!s.stats) return;
+          const meanPct = toPercent(s.stats.mean);
+          const ciLeftPct = toPercent(s.stats.q05);
+          const ciWidthPct = (toPercent(s.stats.q95) - toPercent(s.stats.q05)).toFixed(1);
+          const obsPct = toPercent(s.observed);
+
+          chartHtml += `
+            <div class="school-row">
+              <div class="school-label">School ${s.name}</div>
+              <div class="school-bar-area">
+                <div class="school-ci" style="left:${ciLeftPct}%; width:${ciWidthPct}%;"></div>
+                <div class="school-mean" style="left:${meanPct}%;" title="Posterior mean: ${s.stats.mean.toFixed(1)}"></div>
+                <div class="school-observed" style="left:${obsPct}%;" title="Observed: ${s.observed}"></div>
+              </div>
+            </div>
+          `;
+        });
+        chartHtml += '</div>';
+        chartHtml += `
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot-blue"></div> Posterior mean</div>
+            <div class="legend-item"><div class="legend-dot-red"></div> Observed effect</div>
+            <div class="legend-item"><div class="legend-line-gray"></div> 90% credible interval</div>
+          </div>
+          <p style="color:#666; font-size:13px; margin-top:8px;">
+            Note the shrinkage: posterior means (blue) are pulled toward the population mean
+            compared to the raw observed effects (red circles).
+          </p>
+        `;
+
+        document.getElementById('schoolChart').innerHTML = chartHtml;
+
+        // -----------------------------------------------------------
+        // Results table
+        // -----------------------------------------------------------
+        let resultsHtml = '<h3>Hyperparameters</h3>';
+        resultsHtml += `
+          <table>
+            <tr><th>Parameter</th><th>Mean</th><th>SD</th><th>5%</th><th>Median</th><th>95%</th><th>R-hat</th><th>ESS</th></tr>
+            <tr>
+              <td>mu (population mean)</td>
+              <td>${muAlpha ? muAlpha.mean.toFixed(2) : 'N/A'}</td>
+              <td>${muAlpha ? muAlpha.sd.toFixed(2) : 'N/A'}</td>
+              <td>${muAlpha ? muAlpha.q05.toFixed(2) : 'N/A'}</td>
+              <td>${muAlpha ? muAlpha.q50.toFixed(2) : 'N/A'}</td>
+              <td>${muAlpha ? muAlpha.q95.toFixed(2) : 'N/A'}</td>
+              <td>${result.diagnostics?.rhat?.mu_alpha?.toFixed(3) || 'N/A'}</td>
+              <td>${result.diagnostics?.ess?.mu_alpha?.toFixed(0) || 'N/A'}</td>
+            </tr>
+            <tr>
+              <td>tau (between-school SD)</td>
+              <td>${sigmaAlpha ? sigmaAlpha.mean.toFixed(2) : 'N/A'}</td>
+              <td>${sigmaAlpha ? sigmaAlpha.sd.toFixed(2) : 'N/A'}</td>
+              <td>${sigmaAlpha ? sigmaAlpha.q05.toFixed(2) : 'N/A'}</td>
+              <td>${sigmaAlpha ? sigmaAlpha.q50.toFixed(2) : 'N/A'}</td>
+              <td>${sigmaAlpha ? sigmaAlpha.q95.toFixed(2) : 'N/A'}</td>
+              <td>${result.diagnostics?.rhat?.sigma_alpha?.toFixed(3) || 'N/A'}</td>
+              <td>${result.diagnostics?.ess?.sigma_alpha?.toFixed(0) || 'N/A'}</td>
+            </tr>
+            <tr>
+              <td>sigma (residual SD)</td>
+              <td>${sigma ? sigma.mean.toFixed(2) : 'N/A'}</td>
+              <td>${sigma ? sigma.sd.toFixed(2) : 'N/A'}</td>
+              <td>${sigma ? sigma.q05.toFixed(2) : 'N/A'}</td>
+              <td>${sigma ? sigma.q50.toFixed(2) : 'N/A'}</td>
+              <td>${sigma ? sigma.q95.toFixed(2) : 'N/A'}</td>
+              <td>${result.diagnostics?.rhat?.sigma?.toFixed(3) || 'N/A'}</td>
+              <td>${result.diagnostics?.ess?.sigma?.toFixed(0) || 'N/A'}</td>
+            </tr>
+          </table>
+        `;
+
+        resultsHtml += '<h3>School-Level Effects (alpha_j)</h3>';
+        resultsHtml += `
+          <table>
+            <tr><th>School</th><th>Observed</th><th>SE</th><th>Posterior Mean</th><th>SD</th><th>5%</th><th>95%</th><th>Shrinkage</th></tr>
+        `;
+        schoolStats.forEach(s => {
+          if (!s.stats) return;
+          // Shrinkage: how far the posterior mean moved from the observed toward the population mean
+          const popMean = muAlpha ? muAlpha.mean : 0;
+          const shrinkage = s.observed !== popMean
+            ? (1 - (s.stats.mean - popMean) / (s.observed - popMean)) * 100
+            : 0;
+
+          resultsHtml += `
+            <tr>
+              <td>${s.name}</td>
+              <td>${s.observed}</td>
+              <td>${s.se}</td>
+              <td>${s.stats.mean.toFixed(2)}</td>
+              <td>${s.stats.sd.toFixed(2)}</td>
+              <td>${s.stats.q05.toFixed(2)}</td>
+              <td>${s.stats.q95.toFixed(2)}</td>
+              <td>${shrinkage.toFixed(0)}%</td>
+            </tr>
+          `;
+        });
+        resultsHtml += '</table>';
+
+        resultsHtml += `
+          <h3>Sampling Diagnostics</h3>
+          <table>
+            <tr><td>Chains</td><td>${config.numChains}</td></tr>
+            <tr><td>Samples per chain</td><td>${config.numSamples}</td></tr>
+            <tr><td>Warmup per chain</td><td>${config.numWarmup}</td></tr>
+            <tr><td>Divergences</td><td>${result.diagnostics?.divergences || 0}</td></tr>
+            <tr><td>Sampling time</td><td>${elapsed}s</td></tr>
+          </table>
+        `;
+
+        resultsHtml += `
+          <h3>Interpretation</h3>
+          <p>
+            The hierarchical model estimates a population mean effect of approximately
+            <strong>${muAlpha ? muAlpha.mean.toFixed(1) : '?'}</strong> points,
+            with a between-school standard deviation (tau) of approximately
+            <strong>${sigmaAlpha ? sigmaAlpha.mean.toFixed(1) : '?'}</strong>.
+          </p>
+          <p>
+            The key feature of hierarchical models is <em>partial pooling</em>: the school-level
+            estimates are "shrunk" toward the population mean. Schools with more extreme observed
+            effects (like School A with y=28) show the most shrinkage, while schools with
+            effects closer to the mean show less. This regularization produces more reliable
+            estimates than either complete pooling or no pooling.
+          </p>
+        `;
+
+        document.getElementById('results').innerHTML = resultsHtml;
+
+        status.className = 'complete';
+        status.textContent = `Inference complete in ${elapsed}s. ${result.samples.mu_alpha?.length || 0} samples drawn from ${config.numChains} chains.`;
+
+      } catch (error) {
+        console.error('Inference error:', error);
+        status.className = 'error';
+        status.textContent = 'Error: ' + error.message;
+        document.getElementById('results').innerHTML = `<pre>Error: ${error.message}\n\n${error.stack || ''}</pre>`;
+      }
+
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

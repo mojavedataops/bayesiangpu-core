@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poisson Count Model - BayesianGPU</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 { color: #333; }
+    h2 { color: #444; margin-top: 0; }
+    h3 { color: #555; }
+    #status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .running { background: #fff3cd; color: #856404; }
+    .complete { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover { background: #0056b3; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 13px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+    }
+    th, td {
+      padding: 8px 12px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th { background: #f8f9fa; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    @media (max-width: 700px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+    .histogram {
+      display: flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 120px;
+      margin-top: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid #ddd;
+    }
+    .hist-bar {
+      flex: 1;
+      background: #007bff;
+      border-radius: 2px 2px 0 0;
+      min-width: 4px;
+      position: relative;
+    }
+    .hist-bar:hover {
+      background: #0056b3;
+    }
+    .hist-labels {
+      display: flex;
+      gap: 2px;
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .hist-labels span {
+      flex: 1;
+      text-align: center;
+      min-width: 4px;
+    }
+    .data-counts {
+      display: flex;
+      gap: 3px;
+      align-items: flex-end;
+      height: 80px;
+      margin-top: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid #ddd;
+    }
+    .count-bar {
+      background: #28a745;
+      border-radius: 2px 2px 0 0;
+      min-width: 20px;
+      text-align: center;
+      font-size: 11px;
+      color: white;
+      padding-top: 2px;
+    }
+    .count-labels {
+      display: flex;
+      gap: 3px;
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .count-labels span {
+      min-width: 20px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h1>Poisson Count Model</h1>
+
+  <div class="container">
+    <h2>Model</h2>
+    <pre>
+Estimating an unknown event rate from observed count data.
+
+Model:
+  counts_i ~ Poisson(rate)        [likelihood]
+  rate ~ Gamma(2, 0.5)            [weakly informative prior]
+
+The conjugate posterior is Gamma(2 + sum(y), 0.5 + n), but we use
+MCMC via BayesianGPU's generic run_inference() to demonstrate
+the general-purpose sampler.
+
+Synthetic data: 30 observations from Poisson(rate=4.5)
+    </pre>
+    <button id="runBtn" onclick="runInference()">Run Inference</button>
+    <div id="status"></div>
+  </div>
+
+  <div class="two-col">
+    <div class="container">
+      <h2>Observed Counts</h2>
+      <div id="dataViz">Generating data...</div>
+    </div>
+    <div class="container">
+      <h2>Posterior Distribution</h2>
+      <div id="posteriorViz">Run inference to see posterior...</div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2>Results</h2>
+    <div id="results">Click "Run Inference" to see results...</div>
+  </div>
+
+  <script type="module">
+    // -----------------------------------------------------------
+    // Synthetic data generation
+    // -----------------------------------------------------------
+    // Seeded PRNG (Mulberry32)
+    function mulberry32(seed) {
+      return function() {
+        let t = seed += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // Generate Poisson variate using inverse transform
+    function poisson(rng, lambda) {
+      const L = Math.exp(-lambda);
+      let k = 0;
+      let p = 1;
+      do {
+        k++;
+        p *= rng();
+      } while (p > L);
+      return k - 1;
+    }
+
+    const rng = mulberry32(7);
+    const trueRate = 4.5;
+    const N = 30;
+
+    const counts = [];
+    for (let i = 0; i < N; i++) {
+      counts.push(poisson(rng, trueRate));
+    }
+
+    const sumCounts = counts.reduce((a, b) => a + b, 0);
+    const meanCounts = sumCounts / N;
+
+    // Count frequency for histogram
+    const maxCount = Math.max(...counts);
+    const freq = new Array(maxCount + 1).fill(0);
+    counts.forEach(c => freq[c]++);
+    const maxFreq = Math.max(...freq);
+
+    console.log('Synthetic count data:', counts);
+    console.log('Sum:', sumCounts, 'Mean:', meanCounts.toFixed(2), 'True rate:', trueRate);
+
+    // Show data visualization
+    let dataHtml = `
+      <p>Data: [${counts.join(', ')}]</p>
+      <p>N = ${N}, Sum = ${sumCounts}, Sample mean = ${meanCounts.toFixed(2)}</p>
+      <div class="data-counts">
+    `;
+    for (let c = 0; c <= maxCount; c++) {
+      const height = freq[c] > 0 ? Math.max(15, (freq[c] / maxFreq) * 80) : 0;
+      if (freq[c] > 0) {
+        dataHtml += `<div class="count-bar" style="height:${height}px;">${freq[c]}</div>`;
+      } else {
+        dataHtml += `<div class="count-bar" style="height:0px; background:none;"></div>`;
+      }
+    }
+    dataHtml += '</div><div class="count-labels">';
+    for (let c = 0; c <= maxCount; c++) {
+      dataHtml += `<span>${c}</span>`;
+    }
+    dataHtml += '</div>';
+    dataHtml += '<p style="font-size:12px; color:#666;">Frequency of each count value</p>';
+
+    document.getElementById('dataViz').innerHTML = dataHtml;
+
+    // -----------------------------------------------------------
+    // Inference
+    // -----------------------------------------------------------
+    window.runInference = async function() {
+      const status = document.getElementById('status');
+      const btn = document.getElementById('runBtn');
+
+      status.className = 'running';
+      status.textContent = 'Loading WASM module...';
+      btn.disabled = true;
+
+      try {
+        // Import and initialize BayesianGPU WASM
+        const wasm = await import('../../js/pkg/bayesian_wasm.js');
+        await wasm.default();
+        wasm.init();
+
+        console.log('BayesianGPU version:', wasm.version());
+
+        status.textContent = 'Running MCMC sampling...';
+
+        // Build model spec for the generic run_inference API
+        const model = {
+          priors: [
+            {
+              name: "rate",
+              distribution: {
+                type: "Gamma",
+                params: { shape: 2, rate: 0.5 }
+              }
+            }
+          ],
+          likelihood: {
+            distribution: {
+              type: "Poisson",
+              params: { rate: "rate" }
+            },
+            observed: counts.map(c => c * 1.0)
+          }
+        };
+
+        const config = {
+          numSamples: 2000,
+          numWarmup: 500,
+          numChains: 4,
+          targetAccept: 0.8,
+          seed: 42
+        };
+
+        console.log('Model spec:', JSON.stringify(model));
+        console.log('Config:', JSON.stringify(config));
+
+        const t0 = performance.now();
+        const resultJson = wasm.run_inference(
+          JSON.stringify(model),
+          JSON.stringify(config)
+        );
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+        const result = JSON.parse(resultJson);
+
+        console.log('Inference result:', result);
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        // -----------------------------------------------------------
+        // Summary statistics
+        // -----------------------------------------------------------
+        const samples = result.samples?.rate || [];
+        if (samples.length === 0) {
+          throw new Error('No samples returned for "rate" parameter');
+        }
+
+        const n = samples.length;
+        const sorted = [...samples].sort((a, b) => a - b);
+        const mean = samples.reduce((a, b) => a + b, 0) / n;
+        const variance = samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1);
+        const sd = Math.sqrt(variance);
+        const q025 = sorted[Math.floor(n * 0.025)];
+        const q05 = sorted[Math.floor(n * 0.05)];
+        const q25 = sorted[Math.floor(n * 0.25)];
+        const q50 = sorted[Math.floor(n * 0.50)];
+        const q75 = sorted[Math.floor(n * 0.75)];
+        const q95 = sorted[Math.floor(n * 0.95)];
+        const q975 = sorted[Math.floor(n * 0.975)];
+
+        // Analytic conjugate posterior: Gamma(2 + sumCounts, 0.5 + N)
+        const postShape = 2 + sumCounts;
+        const postRate = 0.5 + N;
+        const analyticMean = postShape / postRate;
+        const analyticSd = Math.sqrt(postShape / (postRate * postRate));
+
+        console.log('Analytic posterior: Gamma(' + postShape + ', ' + postRate + ')');
+        console.log('Analytic mean:', analyticMean.toFixed(3), 'SD:', analyticSd.toFixed(3));
+
+        // -----------------------------------------------------------
+        // Posterior histogram
+        // -----------------------------------------------------------
+        const nBins = 40;
+        const binMin = Math.min(...samples) * 0.95;
+        const binMax = Math.max(...samples) * 1.05;
+        const binWidth = (binMax - binMin) / nBins;
+        const bins = new Array(nBins).fill(0);
+        samples.forEach(s => {
+          const idx = Math.min(Math.floor((s - binMin) / binWidth), nBins - 1);
+          if (idx >= 0) bins[idx]++;
+        });
+        const maxBin = Math.max(...bins);
+
+        let postHtml = '<div class="histogram">';
+        for (let i = 0; i < nBins; i++) {
+          const height = bins[i] > 0 ? Math.max(2, (bins[i] / maxBin) * 120) : 0;
+          postHtml += `<div class="hist-bar" style="height:${height}px;" title="${(binMin + i * binWidth).toFixed(2)}-${(binMin + (i+1) * binWidth).toFixed(2)}: ${bins[i]}"></div>`;
+        }
+        postHtml += '</div>';
+
+        // Show a few label ticks
+        postHtml += '<div class="hist-labels">';
+        for (let i = 0; i < nBins; i++) {
+          if (i === 0 || i === Math.floor(nBins/4) || i === Math.floor(nBins/2) || i === Math.floor(3*nBins/4) || i === nBins - 1) {
+            postHtml += `<span>${(binMin + i * binWidth).toFixed(1)}</span>`;
+          } else {
+            postHtml += '<span></span>';
+          }
+        }
+        postHtml += '</div>';
+
+        postHtml += `
+          <p style="font-size:13px; margin-top:8px;">
+            <strong>Posterior mean:</strong> ${mean.toFixed(3)} |
+            <strong>95% CI:</strong> [${q025.toFixed(3)}, ${q975.toFixed(3)}]
+          </p>
+          <p style="font-size:12px; color:#666;">
+            Dashed: true rate = ${trueRate}
+          </p>
+        `;
+
+        document.getElementById('posteriorViz').innerHTML = postHtml;
+
+        // -----------------------------------------------------------
+        // Results
+        // -----------------------------------------------------------
+        const rhatRate = result.diagnostics?.rhat?.rate;
+        const essRate = result.diagnostics?.ess?.rate;
+        const divergences = result.diagnostics?.divergences || 0;
+
+        let resultsHtml = `
+          <h3>Parameter Estimate</h3>
+          <table>
+            <tr>
+              <th>Parameter</th><th>True</th><th>Mean</th><th>SD</th>
+              <th>2.5%</th><th>Median</th><th>97.5%</th><th>R-hat</th><th>ESS</th>
+            </tr>
+            <tr>
+              <td>rate</td>
+              <td>${trueRate.toFixed(2)}</td>
+              <td>${mean.toFixed(3)}</td>
+              <td>${sd.toFixed(3)}</td>
+              <td>${q025.toFixed(3)}</td>
+              <td>${q50.toFixed(3)}</td>
+              <td>${q975.toFixed(3)}</td>
+              <td>${rhatRate !== undefined ? rhatRate.toFixed(3) : 'N/A'}</td>
+              <td>${essRate !== undefined ? essRate.toFixed(0) : 'N/A'}</td>
+            </tr>
+          </table>
+
+          <h3>Comparison with Analytic Posterior</h3>
+          <p>
+            For a Gamma(a, b) prior with Poisson likelihood, the conjugate posterior is
+            Gamma(a + sum(y), b + n).
+          </p>
+          <table>
+            <tr><th></th><th>MCMC</th><th>Analytic</th></tr>
+            <tr>
+              <td>Posterior distribution</td>
+              <td>--</td>
+              <td>Gamma(${postShape}, ${postRate.toFixed(1)})</td>
+            </tr>
+            <tr>
+              <td>Mean</td>
+              <td>${mean.toFixed(3)}</td>
+              <td>${analyticMean.toFixed(3)}</td>
+            </tr>
+            <tr>
+              <td>SD</td>
+              <td>${sd.toFixed(3)}</td>
+              <td>${analyticSd.toFixed(3)}</td>
+            </tr>
+          </table>
+          <p style="color:#666; font-size:13px;">
+            The MCMC estimates should closely match the analytic solution, validating the sampler.
+            ${Math.abs(mean - analyticMean) < 0.5
+              ? 'The MCMC mean is within 0.5 of the analytic mean -- good agreement.'
+              : 'Some discrepancy is present; longer chains or more warmup may help.'}
+          </p>
+
+          <h3>Sampling Diagnostics</h3>
+          <table>
+            <tr><td>Chains</td><td>${config.numChains}</td></tr>
+            <tr><td>Samples per chain</td><td>${config.numSamples}</td></tr>
+            <tr><td>Warmup per chain</td><td>${config.numWarmup}</td></tr>
+            <tr><td>Total post-warmup samples</td><td>${samples.length}</td></tr>
+            <tr><td>Divergences</td><td>${divergences}</td></tr>
+            <tr><td>Sampling time</td><td>${elapsed}s</td></tr>
+          </table>
+
+          <h3>Interpretation</h3>
+          <p>
+            The data suggest an event rate of approximately <strong>${mean.toFixed(2)}</strong>
+            per unit time (true rate: ${trueRate}). The 95% credible interval
+            [${q025.toFixed(2)}, ${q975.toFixed(2)}]
+            ${q025 <= trueRate && q975 >= trueRate
+              ? 'contains the true rate, as expected.'
+              : 'does not contain the true rate; this can happen with small samples.'}
+          </p>
+          <p>
+            The Gamma(2, 0.5) prior has a mean of 4.0, which provides mild regularization.
+            With ${N} observations summing to ${sumCounts}, the data overwhelm the prior,
+            and the posterior concentrates near the sample mean of ${meanCounts.toFixed(2)}.
+          </p>
+        `;
+
+        document.getElementById('results').innerHTML = resultsHtml;
+
+        status.className = 'complete';
+        status.textContent = `Inference complete in ${elapsed}s. ${samples.length} samples drawn from ${config.numChains} chains.`;
+
+      } catch (error) {
+        console.error('Inference error:', error);
+        status.className = 'error';
+        status.textContent = 'Error: ' + error.message;
+        document.getElementById('results').innerHTML = `<pre>Error: ${error.message}\n\n${error.stack || ''}</pre>`;
+      }
+
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>
