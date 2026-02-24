@@ -28,11 +28,11 @@ pub use context::GpuContext;
 pub use context::PersistentGpuBuffers;
 pub use kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
-    CauchyReduceParams, ExponentialReduceParams, GammaReduceParams, GpuBatchResult,
-    GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams, HalfNormalReduceParams,
-    InverseGammaReduceParams, LogNormalReduceParams, NegativeBinomialReduceParams,
-    NormalBatchParams, NormalParams, PoissonReduceParams, StudentTReduceParams,
-    UniformReduceParams,
+    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams,
+    GpuBatchResult, GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams,
+    HalfNormalReduceParams, InverseGammaReduceParams, LogNormalReduceParams,
+    NegativeBinomialReduceParams, NormalBatchParams, NormalParams, PoissonReduceParams,
+    StudentTReduceParams, UniformReduceParams,
 };
 
 use js_sys::{Float32Array, Promise};

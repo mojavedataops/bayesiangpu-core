@@ -1681,15 +1681,13 @@ impl DynamicModel {
                 let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
                 let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
 
-                let log_prob = if let Some(b) = buffers {
-                    gpu_ctx.run_normal_reduce_persistent(b, loc_val, scale)? as f64
+                let (log_prob, grad) = if let Some(b) = buffers {
+                    let r = gpu_ctx.run_normal_fused_persistent(b, loc_val, scale)?;
+                    (r.total_log_prob as f64, r.total_grad as f64)
                 } else {
-                    gpu_ctx.run_normal_reduce(observed, loc_val, scale)? as f64
-                };
-                let grad = if let Some(b) = buffers {
-                    gpu_ctx.run_normal_grad_reduce_persistent(b, loc_val, scale)? as f64
-                } else {
-                    gpu_ctx.run_normal_grad_reduce(observed, loc_val, scale)? as f64
+                    let lp = gpu_ctx.run_normal_reduce(observed, loc_val, scale)? as f64;
+                    let gr = gpu_ctx.run_normal_grad_reduce(observed, loc_val, scale)? as f64;
+                    (lp, gr)
                 };
 
                 Ok((log_prob, loc_idx, grad))
@@ -1710,15 +1708,13 @@ impl DynamicModel {
                 let (lambda_val, lambda_idx) =
                     self.resolve_param_value(params, &spec.params, "rate");
 
-                let log_prob = if let Some(b) = buffers {
-                    gpu_ctx.run_exponential_reduce_persistent(b, lambda_val)? as f64
+                let (log_prob, grad) = if let Some(b) = buffers {
+                    let r = gpu_ctx.run_exponential_fused_persistent(b, lambda_val)?;
+                    (r.total_log_prob as f64, r.total_grad as f64)
                 } else {
-                    gpu_ctx.run_exponential_reduce(observed, lambda_val)? as f64
-                };
-                let grad = if let Some(b) = buffers {
-                    gpu_ctx.run_exponential_grad_reduce_persistent(b, lambda_val)? as f64
-                } else {
-                    gpu_ctx.run_exponential_grad_reduce(observed, lambda_val)? as f64
+                    let lp = gpu_ctx.run_exponential_reduce(observed, lambda_val)? as f64;
+                    let gr = gpu_ctx.run_exponential_grad_reduce(observed, lambda_val)? as f64;
+                    (lp, gr)
                 };
 
                 Ok((log_prob, lambda_idx, grad))
@@ -1728,15 +1724,13 @@ impl DynamicModel {
                     self.resolve_param_value(params, &spec.params, "shape");
                 let beta = self.get_param_f64(&spec.params, "rate", 1.0) as f32;
 
-                let log_prob = if let Some(b) = buffers {
-                    gpu_ctx.run_gamma_reduce_persistent(b, alpha_val, beta)? as f64
+                let (log_prob, grad) = if let Some(b) = buffers {
+                    let r = gpu_ctx.run_gamma_fused_persistent(b, alpha_val, beta)?;
+                    (r.total_log_prob as f64, r.total_grad as f64)
                 } else {
-                    gpu_ctx.run_gamma_reduce(observed, alpha_val, beta)? as f64
-                };
-                let grad = if let Some(b) = buffers {
-                    gpu_ctx.run_gamma_grad_reduce_persistent(b, alpha_val, beta)? as f64
-                } else {
-                    gpu_ctx.run_gamma_grad_reduce(observed, alpha_val, beta)? as f64
+                    let lp = gpu_ctx.run_gamma_reduce(observed, alpha_val, beta)? as f64;
+                    let gr = gpu_ctx.run_gamma_grad_reduce(observed, alpha_val, beta)? as f64;
+                    (lp, gr)
                 };
 
                 Ok((log_prob, alpha_idx, grad))
@@ -1746,15 +1740,13 @@ impl DynamicModel {
                     self.resolve_param_value(params, &spec.params, "alpha");
                 let beta = self.get_param_f64(&spec.params, "beta", 1.0) as f32;
 
-                let log_prob = if let Some(b) = buffers {
-                    gpu_ctx.run_beta_reduce_persistent(b, alpha_val, beta)? as f64
+                let (log_prob, grad) = if let Some(b) = buffers {
+                    let r = gpu_ctx.run_beta_fused_persistent(b, alpha_val, beta)?;
+                    (r.total_log_prob as f64, r.total_grad as f64)
                 } else {
-                    gpu_ctx.run_beta_reduce(observed, alpha_val, beta)? as f64
-                };
-                let grad = if let Some(b) = buffers {
-                    gpu_ctx.run_beta_grad_reduce_persistent(b, alpha_val, beta)? as f64
-                } else {
-                    gpu_ctx.run_beta_grad_reduce(observed, alpha_val, beta)? as f64
+                    let lp = gpu_ctx.run_beta_reduce(observed, alpha_val, beta)? as f64;
+                    let gr = gpu_ctx.run_beta_grad_reduce(observed, alpha_val, beta)? as f64;
+                    (lp, gr)
                 };
 
                 Ok((log_prob, alpha_idx, grad))

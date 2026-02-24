@@ -9,11 +9,11 @@ use wgpu::{util::DeviceExt, BindGroupLayout, BufferUsages, ComputePipeline, Devi
 
 use super::kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
-    CauchyReduceParams, ExponentialReduceParams, GammaReduceParams, GpuBatchResult,
-    GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams, HalfNormalReduceParams,
-    InverseGammaReduceParams, LogNormalReduceParams, NegativeBinomialReduceParams,
-    NormalBatchParams, NormalParams, PoissonReduceParams, StudentTReduceParams,
-    UniformReduceParams,
+    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams,
+    GpuBatchResult, GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams,
+    HalfNormalReduceParams, InverseGammaReduceParams, LogNormalReduceParams,
+    NegativeBinomialReduceParams, NormalBatchParams, NormalParams, PoissonReduceParams,
+    StudentTReduceParams, UniformReduceParams,
 };
 
 /// A lazily-initialized pipeline + bind group layout pair.
@@ -316,6 +316,8 @@ pub struct PersistentGpuBuffers {
     pub params_buffer: wgpu::Buffer,
     pub partial_sums_buffer: wgpu::Buffer,
     pub staging_buffer: wgpu::Buffer,
+    pub grad_partial_sums_buffer: wgpu::Buffer,
+    pub grad_staging_buffer: wgpu::Buffer,
     pub workgroup_count: u32,
     pub count: u32,
     /// Max params struct size this buffer was allocated for
@@ -367,11 +369,27 @@ pub fn create_persistent_buffers(
         mapped_at_creation: false,
     });
 
+    let grad_partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("persistent_grad_partial_sums"),
+        size: partial_sums_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let grad_staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("persistent_grad_staging"),
+        size: partial_sums_size,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     PersistentGpuBuffers {
         x_buffer,
         params_buffer,
         partial_sums_buffer,
         staging_buffer,
+        grad_partial_sums_buffer,
+        grad_staging_buffer,
         workgroup_count,
         count,
         params_capacity: max_params_size,
@@ -537,6 +555,165 @@ pub async fn run_grad_reduce_persistent<P: bytemuck::Pod>(
     drop(data);
     buffers.staging_buffer.unmap();
     Ok(GpuGradReduceResult { total_grad })
+}
+
+/// Run fused logp + grad reduce using persistent buffers (fast path).
+///
+/// The key optimization: ONE command encoder, ONE queue.submit, ONE poll_device
+/// for both logp and grad kernels. This halves the synchronization overhead
+/// compared to calling `run_reduce_persistent` and `run_grad_reduce_persistent`
+/// separately.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_fused_logp_and_grad_persistent<P: bytemuck::Pod>(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    logp_pipeline: &Arc<ComputePipeline>,
+    logp_layout: &Arc<BindGroupLayout>,
+    grad_pipeline: &Arc<ComputePipeline>,
+    grad_layout: &Arc<BindGroupLayout>,
+    buffers: &PersistentGpuBuffers,
+    params: P,
+) -> Result<FusedLogpGradResult, String> {
+    if buffers.count == 0 {
+        return Ok(FusedLogpGradResult {
+            total_log_prob: 0.0,
+            total_grad: 0.0,
+        });
+    }
+
+    // Update params in-place once (shared by both kernels)
+    queue.write_buffer(&buffers.params_buffer, 0, bytemuck::bytes_of(&params));
+
+    // Create logp bind group: params, x_values, partial_sums
+    let logp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fused_logp_bg"),
+        layout: logp_layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.x_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.partial_sums_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Create grad bind group: params, x_values, grad_partial_sums
+    let grad_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("fused_grad_bg"),
+        layout: grad_layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.x_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.grad_partial_sums_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // ONE command encoder with TWO compute passes
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("fused_logp_grad_enc"),
+    });
+
+    // Pass 1: logp reduce
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("fused_logp_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(logp_pipeline.as_ref());
+        pass.set_bind_group(0, &logp_bind_group, &[]);
+        pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+    }
+
+    // Pass 2: grad reduce
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("fused_grad_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(grad_pipeline.as_ref());
+        pass.set_bind_group(0, &grad_bind_group, &[]);
+        pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+    }
+
+    // TWO copy operations
+    let partial_sums_size = (buffers.workgroup_count as u64) * 4;
+    encoder.copy_buffer_to_buffer(
+        &buffers.partial_sums_buffer,
+        0,
+        &buffers.staging_buffer,
+        0,
+        partial_sums_size,
+    );
+    encoder.copy_buffer_to_buffer(
+        &buffers.grad_partial_sums_buffer,
+        0,
+        &buffers.grad_staging_buffer,
+        0,
+        partial_sums_size,
+    );
+
+    // ONE submit
+    queue.submit(std::iter::once(encoder.finish()));
+
+    // TWO map_async callbacks
+    let logp_slice = buffers.staging_buffer.slice(..);
+    let grad_slice = buffers.grad_staging_buffer.slice(..);
+
+    let (logp_sender, logp_receiver) = futures_channel::oneshot::channel();
+    let (grad_sender, grad_receiver) = futures_channel::oneshot::channel();
+
+    logp_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = logp_sender.send(r);
+    });
+    grad_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = grad_sender.send(r);
+    });
+
+    // ONE poll drives both mappings
+    poll_device(device);
+
+    logp_receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Logp buffer mapping failed: {:?}", e))?;
+    grad_receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Grad buffer mapping failed: {:?}", e))?;
+
+    // Read both staging buffers and sum
+    let logp_data = logp_slice.get_mapped_range();
+    let logp_partial_sums: &[f32] = bytemuck::cast_slice(&logp_data);
+    let total_log_prob: f32 = logp_partial_sums.iter().sum();
+    drop(logp_data);
+    buffers.staging_buffer.unmap();
+
+    let grad_data = grad_slice.get_mapped_range();
+    let grad_partial_sums: &[f32] = bytemuck::cast_slice(&grad_data);
+    let total_grad: f32 = grad_partial_sums.iter().sum();
+    drop(grad_data);
+    buffers.grad_staging_buffer.unmap();
+
+    Ok(FusedLogpGradResult {
+        total_log_prob,
+        total_grad,
+    })
 }
 
 impl GpuContext {

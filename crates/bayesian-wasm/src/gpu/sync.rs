@@ -23,10 +23,10 @@ use wgpu::{BindGroupLayout, ComputePipeline, Device, Queue};
 use super::context::{self, GpuContext, PersistentGpuBuffers};
 use super::kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CauchyReduceParams,
-    ExponentialReduceParams, GammaReduceParams, GpuBatchResult, GpuGradReduceResult,
-    GpuReduceResult, GpuResult, HalfNormalReduceParams, InverseGammaReduceParams,
-    LogNormalReduceParams, NegativeBinomialReduceParams, NormalBatchParams, PoissonReduceParams,
-    StudentTReduceParams, UniformReduceParams,
+    ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams, GpuBatchResult,
+    GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalReduceParams,
+    InverseGammaReduceParams, LogNormalReduceParams, NegativeBinomialReduceParams,
+    NormalBatchParams, PoissonReduceParams, StudentTReduceParams, UniformReduceParams,
 };
 
 /// Block on an async future using a shared tokio runtime.
@@ -726,6 +726,279 @@ impl GpuContextSync {
             },
         ))
         .map(|r| r.total_grad)
+    }
+
+    // ==================== Fused logp + grad persistent kernels ====================
+
+    /// Run fused Normal logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_normal_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        mu: f32,
+        sigma: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.normal_reduce_pipeline_clone();
+        let logp_layout = self.inner.normal_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.normal_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.normal_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            NormalBatchParams {
+                mu,
+                sigma,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
+    }
+
+    /// Run fused HalfNormal logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_half_normal_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        sigma: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.half_normal_reduce_pipeline_clone();
+        let logp_layout = self.inner.half_normal_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.half_normal_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.half_normal_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            HalfNormalReduceParams {
+                sigma,
+                count: buffers.count,
+                _padding1: 0,
+                _padding2: 0,
+            },
+        ))
+    }
+
+    /// Run fused Exponential logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_exponential_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        lambda: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.exponential_reduce_pipeline_clone();
+        let logp_layout = self.inner.exponential_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.exponential_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.exponential_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            ExponentialReduceParams {
+                lambda,
+                count: buffers.count,
+                _padding1: 0,
+                _padding2: 0,
+            },
+        ))
+    }
+
+    /// Run fused Beta logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_beta_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.beta_reduce_pipeline_clone();
+        let logp_layout = self.inner.beta_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.beta_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.beta_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            BetaReduceParams {
+                alpha,
+                beta,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
+    }
+
+    /// Run fused Gamma logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_gamma_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.gamma_reduce_pipeline_clone();
+        let logp_layout = self.inner.gamma_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.gamma_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.gamma_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            GammaReduceParams {
+                alpha,
+                beta,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
+    }
+
+    /// Run fused InverseGamma logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_inverse_gamma_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.inverse_gamma_reduce_pipeline_clone();
+        let logp_layout = self.inner.inverse_gamma_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.inverse_gamma_grad_reduce_pipeline_clone();
+        let grad_layout = self
+            .inner
+            .inverse_gamma_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            InverseGammaReduceParams {
+                alpha,
+                beta,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
+    }
+
+    /// Run fused StudentT logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_student_t_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+        nu: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.student_t_reduce_pipeline_clone();
+        let logp_layout = self.inner.student_t_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.student_t_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.student_t_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            StudentTReduceParams {
+                loc,
+                scale,
+                nu,
+                count: buffers.count,
+            },
+        ))
+    }
+
+    /// Run fused Cauchy logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_cauchy_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.cauchy_reduce_pipeline_clone();
+        let logp_layout = self.inner.cauchy_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.cauchy_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.cauchy_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            CauchyReduceParams {
+                loc,
+                scale,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
+    }
+
+    /// Run fused LogNormal logp + grad using persistent buffers (one GPU dispatch).
+    pub fn run_lognormal_fused_persistent(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        mu: f32,
+        sigma: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let logp_pipeline = self.inner.lognormal_reduce_pipeline_clone();
+        let logp_layout = self.inner.lognormal_reduce_bind_group_layout_clone();
+        let grad_pipeline = self.inner.lognormal_grad_reduce_pipeline_clone();
+        let grad_layout = self.inner.lognormal_grad_reduce_bind_group_layout_clone();
+        block_on(context::run_fused_logp_and_grad_persistent(
+            &device,
+            &queue,
+            &logp_pipeline,
+            &logp_layout,
+            &grad_pipeline,
+            &grad_layout,
+            buffers,
+            LogNormalReduceParams {
+                mu,
+                sigma,
+                count: buffers.count,
+                _padding: 0,
+            },
+        ))
     }
 
     // ==================== Single-value kernels ====================

@@ -197,3 +197,10 @@ pub struct GpuReduceResult {
 pub struct GpuGradReduceResult {
     pub total_grad: f32,
 }
+
+/// Result from fused logp + grad GPU kernel (returns both sums in one dispatch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FusedLogpGradResult {
+    pub total_log_prob: f32,
+    pub total_grad: f32,
+}
