@@ -37,10 +37,10 @@ direct-gpu = [
 ]
 
 # Synchronous GPU execution for native Rust usage (not WASM)
-# Uses pollster to block on async GPU operations
+# Uses tokio to block on async GPU operations (pollster hangs on macOS Metal)
 sync-gpu = [
     "direct-gpu",
-    "dep:pollster",
+    "dep:tokio",
 ]
 
 [dependencies]
@@ -62,15 +62,35 @@ getrandom = { workspace = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 
 # Direct wgpu compute (bypasses Burn) - must match burn-wgpu version
-wgpu = { version = "26", optional = true, default-features = false, features = ["webgpu", "wgsl"] }
+# NOTE: "webgpu" feature is only for WASM targets; on native, use metal/vulkan/dx12
+wgpu = { version = "26", optional = true, default-features = false, features = ["wgsl"] }
 bytemuck = { version = "1.14", optional = true, features = ["derive"] }
 futures-channel = { version = "0.3", optional = true }
 
 # Synchronous GPU execution for native Rust (blocks on async)
-pollster = { version = "0.4", optional = true }
+# NOTE: pollster hangs on macOS Metal - tokio's runtime properly drives wgpu futures
+tokio = { version = "1", optional = true, features = ["rt-multi-thread"] }
 
 # Better panic messages in browser console
 console_error_panic_hook = { version = "0.1.7", optional = true }
 
+# Native GPU backends for sync-gpu (non-WASM targets)
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "26", optional = true, features = ["metal", "wgsl"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "26", optional = true, features = ["vulkan", "wgsl"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "26", optional = true, features = ["dx12", "vulkan", "wgsl"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "26", optional = true, features = ["webgpu"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[[bench]]
+name = "gpu_vs_cpu"
+harness = false
+required-features = ["sync-gpu"]

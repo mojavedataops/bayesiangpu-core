@@ -25,6 +25,7 @@ mod kernels;
 pub mod sync;
 
 pub use context::GpuContext;
+pub use context::PersistentGpuBuffers;
 pub use kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
     CauchyReduceParams, ExponentialReduceParams, GammaReduceParams, GpuBatchResult,
@@ -41,7 +42,7 @@ use wasm_bindgen_futures::future_to_promise;
 
 // Thread-local storage for GPU context (WASM is single-threaded)
 thread_local! {
-    static GPU_CONTEXT: RefCell<Option<GpuContext>> = RefCell::new(None);
+    static GPU_CONTEXT: RefCell<Option<GpuContext>> = const { RefCell::new(None) };
 }
 
 /// Initialize the GPU compute context
@@ -143,15 +144,14 @@ pub fn test_normal_kernel(x: f32, mu: f32, sigma: f32) -> Promise {
 pub fn test_half_normal_kernel(x: f32, sigma: f32) -> Promise {
     let result = GPU_CONTEXT.with(|cell| {
         let borrow = cell.borrow();
-        match borrow.as_ref() {
-            Some(ctx) => Some((
+        borrow.as_ref().map(|ctx| {
+            (
                 ctx.device_clone(),
                 ctx.queue_clone(),
                 ctx.half_normal_pipeline_clone(),
                 ctx.half_normal_bind_group_layout_clone(),
-            )),
-            None => None,
-        }
+            )
+        })
     });
 
     future_to_promise(async move {
@@ -189,15 +189,14 @@ pub fn run_normal_batch(x_values: Float32Array, mu: f32, sigma: f32) -> Promise 
 
     let result = GPU_CONTEXT.with(|cell| {
         let borrow = cell.borrow();
-        match borrow.as_ref() {
-            Some(ctx) => Some((
+        borrow.as_ref().map(|ctx| {
+            (
                 ctx.device_clone(),
                 ctx.queue_clone(),
                 ctx.normal_batch_pipeline_clone(),
                 ctx.normal_batch_bind_group_layout_clone(),
-            )),
-            None => None,
-        }
+            )
+        })
     });
 
     future_to_promise(async move {
@@ -240,15 +239,14 @@ pub fn run_normal_reduce(x_values: Float32Array, mu: f32, sigma: f32) -> Promise
 
     let result = GPU_CONTEXT.with(|cell| {
         let borrow = cell.borrow();
-        match borrow.as_ref() {
-            Some(ctx) => Some((
+        borrow.as_ref().map(|ctx| {
+            (
                 ctx.device_clone(),
                 ctx.queue_clone(),
                 ctx.normal_reduce_pipeline_clone(),
                 ctx.normal_reduce_bind_group_layout_clone(),
-            )),
-            None => None,
-        }
+            )
+        })
     });
 
     future_to_promise(async move {

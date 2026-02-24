@@ -1,8 +1,10 @@
 //! GPU context management for direct wgpu compute
 //!
 //! Handles wgpu device/queue initialization and compute pipeline creation.
+//! Pipelines are lazily compiled on first use via OnceLock, avoiding the
+//! upfront cost of compiling 30+ WGSL shaders during initialization.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use wgpu::{util::DeviceExt, BindGroupLayout, BufferUsages, ComputePipeline, Device, Queue};
 
 use super::kernels::{
@@ -14,76 +16,546 @@ use super::kernels::{
     UniformReduceParams,
 };
 
+/// A lazily-initialized pipeline + bind group layout pair.
+type LazyPipeline = OnceLock<(Arc<ComputePipeline>, Arc<BindGroupLayout>)>;
+
 /// GPU compute context holding wgpu resources
 ///
 /// Resources are wrapped in Arc for cheap cloning when needed for async operations.
+/// Pipelines are lazily compiled on first access to avoid long initialization times
+/// when only a subset of distributions is used.
 pub struct GpuContext {
     device: Arc<Device>,
     queue: Arc<Queue>,
     // Basic kernels
-    normal_pipeline: Arc<ComputePipeline>,
-    normal_bind_group_layout: Arc<BindGroupLayout>,
-    half_normal_pipeline: Arc<ComputePipeline>,
-    half_normal_bind_group_layout: Arc<BindGroupLayout>,
-    normal_batch_pipeline: Arc<ComputePipeline>,
-    normal_batch_bind_group_layout: Arc<BindGroupLayout>,
+    normal: LazyPipeline,
+    half_normal: LazyPipeline,
+    normal_batch: LazyPipeline,
     // Log-prob reduce kernels
-    normal_reduce_pipeline: Arc<ComputePipeline>,
-    normal_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    half_normal_reduce_pipeline: Arc<ComputePipeline>,
-    half_normal_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    exponential_reduce_pipeline: Arc<ComputePipeline>,
-    exponential_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    gamma_reduce_pipeline: Arc<ComputePipeline>,
-    gamma_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    beta_reduce_pipeline: Arc<ComputePipeline>,
-    beta_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    inverse_gamma_reduce_pipeline: Arc<ComputePipeline>,
-    inverse_gamma_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    uniform_reduce_pipeline: Arc<ComputePipeline>,
-    uniform_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    cauchy_reduce_pipeline: Arc<ComputePipeline>,
-    cauchy_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    student_t_reduce_pipeline: Arc<ComputePipeline>,
-    student_t_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    lognormal_reduce_pipeline: Arc<ComputePipeline>,
-    lognormal_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    bernoulli_reduce_pipeline: Arc<ComputePipeline>,
-    bernoulli_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    binomial_reduce_pipeline: Arc<ComputePipeline>,
-    binomial_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    poisson_reduce_pipeline: Arc<ComputePipeline>,
-    poisson_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    negative_binomial_reduce_pipeline: Arc<ComputePipeline>,
-    negative_binomial_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    categorical_reduce_pipeline: Arc<ComputePipeline>,
-    categorical_reduce_bind_group_layout: Arc<BindGroupLayout>,
+    normal_reduce: LazyPipeline,
+    half_normal_reduce: LazyPipeline,
+    exponential_reduce: LazyPipeline,
+    gamma_reduce: LazyPipeline,
+    beta_reduce: LazyPipeline,
+    inverse_gamma_reduce: LazyPipeline,
+    uniform_reduce: LazyPipeline,
+    cauchy_reduce: LazyPipeline,
+    student_t_reduce: LazyPipeline,
+    lognormal_reduce: LazyPipeline,
+    bernoulli_reduce: LazyPipeline,
+    binomial_reduce: LazyPipeline,
+    poisson_reduce: LazyPipeline,
+    negative_binomial_reduce: LazyPipeline,
+    categorical_reduce: LazyPipeline,
     // Gradient reduce kernels
-    normal_grad_reduce_pipeline: Arc<ComputePipeline>,
-    normal_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    half_normal_grad_reduce_pipeline: Arc<ComputePipeline>,
-    half_normal_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    exponential_grad_reduce_pipeline: Arc<ComputePipeline>,
-    exponential_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    beta_grad_reduce_pipeline: Arc<ComputePipeline>,
-    beta_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    gamma_grad_reduce_pipeline: Arc<ComputePipeline>,
-    gamma_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    inverse_gamma_grad_reduce_pipeline: Arc<ComputePipeline>,
-    inverse_gamma_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    student_t_grad_reduce_pipeline: Arc<ComputePipeline>,
-    student_t_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    cauchy_grad_reduce_pipeline: Arc<ComputePipeline>,
-    cauchy_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
-    lognormal_grad_reduce_pipeline: Arc<ComputePipeline>,
-    lognormal_grad_reduce_bind_group_layout: Arc<BindGroupLayout>,
+    normal_grad_reduce: LazyPipeline,
+    half_normal_grad_reduce: LazyPipeline,
+    exponential_grad_reduce: LazyPipeline,
+    beta_grad_reduce: LazyPipeline,
+    gamma_grad_reduce: LazyPipeline,
+    inverse_gamma_grad_reduce: LazyPipeline,
+    student_t_grad_reduce: LazyPipeline,
+    cauchy_grad_reduce: LazyPipeline,
+    lognormal_grad_reduce: LazyPipeline,
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+/// On native targets, poll the device to drive buffer mapping to completion.
+/// On WASM, the browser event loop handles wgpu polling automatically.
+#[cfg(not(target_arch = "wasm32"))]
+fn poll_device(device: &Device) {
+    let _ = device.poll(wgpu::PollType::Wait);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn poll_device(_device: &Device) {
+    // Browser event loop handles wgpu polling on WASM
+}
+
+// ============================================================================
+// Helper functions for pipeline creation (used by lazy initializers)
+// ============================================================================
+
+/// Create the standard 3-binding reduce layout (params, x_values, partial_sums)
+fn create_reduce_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Create a compute pipeline from shader source and bind group layout
+fn create_pipeline(
+    device: &Device,
+    shader_source: &str,
+    label: &str,
+    layout: &BindGroupLayout,
+) -> ComputePipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(&format!("{}_layout", label)),
+        bind_group_layouts: &[layout],
+        push_constant_ranges: &[],
+    });
+    device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some(label),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    })
+}
+
+/// Create the standard 2-binding basic kernel layout (params uniform, output storage)
+fn create_basic_2_binding_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Create the 4-binding batch layout (params, x_values, log_probs, grads)
+fn create_batch_4_binding_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Create the 4-binding categorical layout (params, x_values, probs, partial_sums)
+fn create_categorical_reduce_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Helper: lazily create a standard 3-binding reduce pipeline
+fn init_reduce_pipeline(
+    device: &Device,
+    shader_source: &str,
+    label: &str,
+) -> (Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+    let layout = create_reduce_layout(device, &format!("{}_bind_group_layout", label));
+    let pipeline = create_pipeline(
+        device,
+        shader_source,
+        &format!("{}_pipeline", label),
+        &layout,
+    );
+    (Arc::new(pipeline), Arc::new(layout))
+}
+
+/// Helper: lazily create a 2-binding basic pipeline
+fn init_basic_pipeline(
+    device: &Device,
+    shader_source: &str,
+    label: &str,
+) -> (Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+    let layout = create_basic_2_binding_layout(device, &format!("{}_bind_group_layout", label));
+    let pipeline = create_pipeline(
+        device,
+        shader_source,
+        &format!("{}_pipeline", label),
+        &layout,
+    );
+    (Arc::new(pipeline), Arc::new(layout))
+}
+
+// =============================================================================
+// PERSISTENT GPU BUFFERS
+// =============================================================================
+
+/// Pre-allocated GPU buffers for repeated kernel execution.
+///
+/// Observation data is uploaded once. The params buffer is updated in-place
+/// via `queue.write_buffer`. Partial sums and staging buffers are reused.
+pub struct PersistentGpuBuffers {
+    pub x_buffer: wgpu::Buffer,
+    pub params_buffer: wgpu::Buffer,
+    pub partial_sums_buffer: wgpu::Buffer,
+    pub staging_buffer: wgpu::Buffer,
+    pub workgroup_count: u32,
+    pub count: u32,
+    /// Max params struct size this buffer was allocated for
+    pub params_capacity: u64,
+}
+
+/// Create persistent GPU buffers for repeated kernel execution.
+///
+/// Observation data (`x_values`) is uploaded once into a storage buffer.
+/// The params buffer is sized to `max_params_size` and can be updated in-place
+/// via `queue.write_buffer` on each call. Partial sums and staging buffers
+/// are sized for the workgroup count and reused across dispatches.
+pub fn create_persistent_buffers(
+    device: &Device,
+    queue: &Queue,
+    x_values: &[f32],
+    max_params_size: u64,
+) -> PersistentGpuBuffers {
+    let _ = queue; // queue not needed for buffer creation, but kept in API for future use
+    let count = x_values.len() as u32;
+    let workgroup_count = count.div_ceil(256);
+    let partial_sums_size = (workgroup_count as u64) * 4;
+
+    let x_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("persistent_x"),
+        contents: bytemuck::cast_slice(x_values),
+        usage: BufferUsages::STORAGE,
+    });
+
+    // Params buffer with COPY_DST so we can update in-place
+    let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("persistent_params"),
+        size: max_params_size,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("persistent_partial_sums"),
+        size: partial_sums_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("persistent_staging"),
+        size: partial_sums_size,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    PersistentGpuBuffers {
+        x_buffer,
+        params_buffer,
+        partial_sums_buffer,
+        staging_buffer,
+        workgroup_count,
+        count,
+        params_capacity: max_params_size,
+    }
+}
+
+/// Run a reduce kernel using persistent buffers (fast path for log_prob).
+///
+/// No buffer allocation occurs -- params are written in-place, the compute pass
+/// is dispatched, partial sums are copied to the staging buffer, and the result
+/// is read back and summed on the CPU.
+pub async fn run_reduce_persistent<P: bytemuck::Pod>(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    pipeline: &Arc<ComputePipeline>,
+    layout: &Arc<BindGroupLayout>,
+    buffers: &PersistentGpuBuffers,
+    params: P,
+) -> Result<GpuReduceResult, String> {
+    if buffers.count == 0 {
+        return Ok(GpuReduceResult {
+            total_log_prob: 0.0,
+        });
+    }
+
+    // Update params in-place (no allocation)
+    queue.write_buffer(&buffers.params_buffer, 0, bytemuck::bytes_of(&params));
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("persistent_reduce_bg"),
+        layout: layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.x_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.partial_sums_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("persistent_reduce_enc"),
+    });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("persistent_reduce_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline.as_ref());
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+    }
+    let partial_sums_size = (buffers.workgroup_count as u64) * 4;
+    encoder.copy_buffer_to_buffer(
+        &buffers.partial_sums_buffer,
+        0,
+        &buffers.staging_buffer,
+        0,
+        partial_sums_size,
+    );
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let buffer_slice = buffers.staging_buffer.slice(..);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    poll_device(device);
+    receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Buffer mapping failed: {:?}", e))?;
+
+    let data = buffer_slice.get_mapped_range();
+    let partial_sums: &[f32] = bytemuck::cast_slice(&data);
+    let total_log_prob: f32 = partial_sums.iter().sum();
+    drop(data);
+    buffers.staging_buffer.unmap();
+    Ok(GpuReduceResult { total_log_prob })
+}
+
+/// Run a gradient reduce kernel using persistent buffers (fast path for gradients).
+///
+/// Identical dispatch pattern to `run_reduce_persistent` but returns a
+/// `GpuGradReduceResult` (total_grad) instead of a `GpuReduceResult`.
+pub async fn run_grad_reduce_persistent<P: bytemuck::Pod>(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    pipeline: &Arc<ComputePipeline>,
+    layout: &Arc<BindGroupLayout>,
+    buffers: &PersistentGpuBuffers,
+    params: P,
+) -> Result<GpuGradReduceResult, String> {
+    if buffers.count == 0 {
+        return Ok(GpuGradReduceResult { total_grad: 0.0 });
+    }
+
+    // Update params in-place (no allocation)
+    queue.write_buffer(&buffers.params_buffer, 0, bytemuck::bytes_of(&params));
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("persistent_grad_reduce_bg"),
+        layout: layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.x_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.partial_sums_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("persistent_grad_reduce_enc"),
+    });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("persistent_grad_reduce_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline.as_ref());
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+    }
+    let partial_sums_size = (buffers.workgroup_count as u64) * 4;
+    encoder.copy_buffer_to_buffer(
+        &buffers.partial_sums_buffer,
+        0,
+        &buffers.staging_buffer,
+        0,
+        partial_sums_size,
+    );
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let buffer_slice = buffers.staging_buffer.slice(..);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    poll_device(device);
+    receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Buffer mapping failed: {:?}", e))?;
+
+    let data = buffer_slice.get_mapped_range();
+    let partial_sums: &[f32] = bytemuck::cast_slice(&data);
+    let total_grad: f32 = partial_sums.iter().sum();
+    drop(data);
+    buffers.staging_buffer.unmap();
+    Ok(GpuGradReduceResult { total_grad })
 }
 
 impl GpuContext {
     /// Create a new GPU context with async initialization
+    ///
+    /// Only initializes the wgpu adapter, device, and queue.
+    /// Compute pipelines are lazily compiled on first use.
     pub async fn new() -> Result<Self, String> {
+        // Use BROWSER_WEBGPU for WASM targets, platform-specific native backends otherwise.
+        // NOTE: Backends::all() includes BROWSER_WEBGPU when the "webgpu" feature is enabled,
+        // which causes request_adapter to hang on native macOS. Use PRIMARY to get only
+        // Metal/Vulkan/DX12 based on the platform.
+        #[cfg(target_arch = "wasm32")]
+        let backends = wgpu::Backends::BROWSER_WEBGPU;
+        #[cfg(not(target_arch = "wasm32"))]
+        let backends = wgpu::Backends::PRIMARY;
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
+            backends,
             ..Default::default()
         });
 
@@ -96,585 +568,341 @@ impl GpuContext {
             .await
             .map_err(|e| format!("Failed to get GPU adapter: {:?}", e))?;
 
+        // Use appropriate limits: WebGL2 defaults for WASM, device defaults for native
+        #[cfg(target_arch = "wasm32")]
+        let required_limits = wgpu::Limits::downlevel_webgl2_defaults();
+        #[cfg(not(target_arch = "wasm32"))]
+        let required_limits = wgpu::Limits::default();
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("bayesiangpu"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
             })
             .await
             .map_err(|e| format!("Failed to get GPU device: {:?}", e))?;
 
-        // Helper to create standard 3-binding reduce layout (params, x_values, partial_sums)
-        let create_reduce_layout = |device: &Device, label: &str| -> BindGroupLayout {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        };
-
-        // Helper to create pipeline from shader and layout
-        let create_reduce_pipeline = |device: &Device,
-                                      shader_source: &str,
-                                      label: &str,
-                                      layout: &BindGroupLayout|
-         -> ComputePipeline {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-            });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(&format!("{}_layout", label)),
-                bind_group_layouts: &[layout],
-                push_constant_ranges: &[],
-            });
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(label),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-
-        // =====================================================================
-        // BASIC KERNELS
-        // =====================================================================
-
-        // Normal distribution pipeline (2-binding: params, output)
-        let normal_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("normal_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/normal.wgsl").into()),
-        });
-        let normal_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("normal_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let normal_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("normal_pipeline_layout"),
-                bind_group_layouts: &[&normal_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let normal_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("normal_pipeline"),
-            layout: Some(&normal_pipeline_layout),
-            module: &normal_shader,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-        // HalfNormal distribution pipeline (2-binding)
-        let half_normal_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("half_normal_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/half_normal.wgsl").into()),
-        });
-        let half_normal_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("half_normal_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let half_normal_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("half_normal_pipeline_layout"),
-                bind_group_layouts: &[&half_normal_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let half_normal_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("half_normal_pipeline"),
-                layout: Some(&half_normal_pipeline_layout),
-                module: &half_normal_shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-
-        // Normal BATCH pipeline (4-binding: params, x_values, log_probs, grads)
-        let normal_batch_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("normal_batch_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/normal_batch.wgsl").into()),
-        });
-        let normal_batch_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("normal_batch_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let normal_batch_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("normal_batch_pipeline_layout"),
-                bind_group_layouts: &[&normal_batch_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-        let normal_batch_pipeline =
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("normal_batch_pipeline"),
-                layout: Some(&normal_batch_pipeline_layout),
-                module: &normal_batch_shader,
-                entry_point: Some("main"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
-
-        // =====================================================================
-        // LOG-PROB REDUCE KERNELS (3-binding)
-        // =====================================================================
-
-        let normal_reduce_bind_group_layout =
-            create_reduce_layout(&device, "normal_reduce_bind_group_layout");
-        let normal_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/normal_reduce.wgsl"),
-            "normal_reduce_pipeline",
-            &normal_reduce_bind_group_layout,
-        );
-
-        let half_normal_reduce_bind_group_layout =
-            create_reduce_layout(&device, "half_normal_reduce_bind_group_layout");
-        let half_normal_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/half_normal_reduce.wgsl"),
-            "half_normal_reduce_pipeline",
-            &half_normal_reduce_bind_group_layout,
-        );
-
-        let exponential_reduce_bind_group_layout =
-            create_reduce_layout(&device, "exponential_reduce_bind_group_layout");
-        let exponential_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/exponential_reduce.wgsl"),
-            "exponential_reduce_pipeline",
-            &exponential_reduce_bind_group_layout,
-        );
-
-        let gamma_reduce_bind_group_layout =
-            create_reduce_layout(&device, "gamma_reduce_bind_group_layout");
-        let gamma_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/gamma_reduce.wgsl"),
-            "gamma_reduce_pipeline",
-            &gamma_reduce_bind_group_layout,
-        );
-
-        let beta_reduce_bind_group_layout =
-            create_reduce_layout(&device, "beta_reduce_bind_group_layout");
-        let beta_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/beta_reduce.wgsl"),
-            "beta_reduce_pipeline",
-            &beta_reduce_bind_group_layout,
-        );
-
-        let inverse_gamma_reduce_bind_group_layout =
-            create_reduce_layout(&device, "inverse_gamma_reduce_bind_group_layout");
-        let inverse_gamma_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/inverse_gamma_reduce.wgsl"),
-            "inverse_gamma_reduce_pipeline",
-            &inverse_gamma_reduce_bind_group_layout,
-        );
-
-        let uniform_reduce_bind_group_layout =
-            create_reduce_layout(&device, "uniform_reduce_bind_group_layout");
-        let uniform_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/uniform_reduce.wgsl"),
-            "uniform_reduce_pipeline",
-            &uniform_reduce_bind_group_layout,
-        );
-
-        let cauchy_reduce_bind_group_layout =
-            create_reduce_layout(&device, "cauchy_reduce_bind_group_layout");
-        let cauchy_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/cauchy_reduce.wgsl"),
-            "cauchy_reduce_pipeline",
-            &cauchy_reduce_bind_group_layout,
-        );
-
-        let student_t_reduce_bind_group_layout =
-            create_reduce_layout(&device, "student_t_reduce_bind_group_layout");
-        let student_t_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/student_t_reduce.wgsl"),
-            "student_t_reduce_pipeline",
-            &student_t_reduce_bind_group_layout,
-        );
-
-        let lognormal_reduce_bind_group_layout =
-            create_reduce_layout(&device, "lognormal_reduce_bind_group_layout");
-        let lognormal_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/lognormal_reduce.wgsl"),
-            "lognormal_reduce_pipeline",
-            &lognormal_reduce_bind_group_layout,
-        );
-
-        let bernoulli_reduce_bind_group_layout =
-            create_reduce_layout(&device, "bernoulli_reduce_bind_group_layout");
-        let bernoulli_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/bernoulli_reduce.wgsl"),
-            "bernoulli_reduce_pipeline",
-            &bernoulli_reduce_bind_group_layout,
-        );
-
-        let binomial_reduce_bind_group_layout =
-            create_reduce_layout(&device, "binomial_reduce_bind_group_layout");
-        let binomial_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/binomial_reduce.wgsl"),
-            "binomial_reduce_pipeline",
-            &binomial_reduce_bind_group_layout,
-        );
-
-        let poisson_reduce_bind_group_layout =
-            create_reduce_layout(&device, "poisson_reduce_bind_group_layout");
-        let poisson_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/poisson_reduce.wgsl"),
-            "poisson_reduce_pipeline",
-            &poisson_reduce_bind_group_layout,
-        );
-
-        let negative_binomial_reduce_bind_group_layout =
-            create_reduce_layout(&device, "negative_binomial_reduce_bind_group_layout");
-        let negative_binomial_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/negative_binomial_reduce.wgsl"),
-            "negative_binomial_reduce_pipeline",
-            &negative_binomial_reduce_bind_group_layout,
-        );
-
-        // Categorical has 4 bindings (params, x_values, probs, partial_sums)
-        let categorical_reduce_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("categorical_reduce_bind_group_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
-        let categorical_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/categorical_reduce.wgsl"),
-            "categorical_reduce_pipeline",
-            &categorical_reduce_bind_group_layout,
-        );
-
-        // =====================================================================
-        // GRADIENT REDUCE KERNELS (3-binding)
-        // =====================================================================
-
-        let normal_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "normal_grad_reduce_bind_group_layout");
-        let normal_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/normal_grad_reduce.wgsl"),
-            "normal_grad_reduce_pipeline",
-            &normal_grad_reduce_bind_group_layout,
-        );
-
-        let half_normal_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "half_normal_grad_reduce_bind_group_layout");
-        let half_normal_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/half_normal_grad_reduce.wgsl"),
-            "half_normal_grad_reduce_pipeline",
-            &half_normal_grad_reduce_bind_group_layout,
-        );
-
-        let exponential_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "exponential_grad_reduce_bind_group_layout");
-        let exponential_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/exponential_grad_reduce.wgsl"),
-            "exponential_grad_reduce_pipeline",
-            &exponential_grad_reduce_bind_group_layout,
-        );
-
-        let beta_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "beta_grad_reduce_bind_group_layout");
-        let beta_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/beta_grad_reduce.wgsl"),
-            "beta_grad_reduce_pipeline",
-            &beta_grad_reduce_bind_group_layout,
-        );
-
-        let gamma_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "gamma_grad_reduce_bind_group_layout");
-        let gamma_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/gamma_grad_reduce.wgsl"),
-            "gamma_grad_reduce_pipeline",
-            &gamma_grad_reduce_bind_group_layout,
-        );
-
-        let inverse_gamma_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "inverse_gamma_grad_reduce_bind_group_layout");
-        let inverse_gamma_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/inverse_gamma_grad_reduce.wgsl"),
-            "inverse_gamma_grad_reduce_pipeline",
-            &inverse_gamma_grad_reduce_bind_group_layout,
-        );
-
-        let student_t_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "student_t_grad_reduce_bind_group_layout");
-        let student_t_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/student_t_grad_reduce.wgsl"),
-            "student_t_grad_reduce_pipeline",
-            &student_t_grad_reduce_bind_group_layout,
-        );
-
-        let cauchy_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "cauchy_grad_reduce_bind_group_layout");
-        let cauchy_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/cauchy_grad_reduce.wgsl"),
-            "cauchy_grad_reduce_pipeline",
-            &cauchy_grad_reduce_bind_group_layout,
-        );
-
-        let lognormal_grad_reduce_bind_group_layout =
-            create_reduce_layout(&device, "lognormal_grad_reduce_bind_group_layout");
-        let lognormal_grad_reduce_pipeline = create_reduce_pipeline(
-            &device,
-            include_str!("shaders/lognormal_grad_reduce.wgsl"),
-            "lognormal_grad_reduce_pipeline",
-            &lognormal_grad_reduce_bind_group_layout,
-        );
-
         Ok(Self {
             device: Arc::new(device),
             queue: Arc::new(queue),
-            normal_pipeline: Arc::new(normal_pipeline),
-            normal_bind_group_layout: Arc::new(normal_bind_group_layout),
-            half_normal_pipeline: Arc::new(half_normal_pipeline),
-            half_normal_bind_group_layout: Arc::new(half_normal_bind_group_layout),
-            normal_batch_pipeline: Arc::new(normal_batch_pipeline),
-            normal_batch_bind_group_layout: Arc::new(normal_batch_bind_group_layout),
-            normal_reduce_pipeline: Arc::new(normal_reduce_pipeline),
-            normal_reduce_bind_group_layout: Arc::new(normal_reduce_bind_group_layout),
-            half_normal_reduce_pipeline: Arc::new(half_normal_reduce_pipeline),
-            half_normal_reduce_bind_group_layout: Arc::new(half_normal_reduce_bind_group_layout),
-            exponential_reduce_pipeline: Arc::new(exponential_reduce_pipeline),
-            exponential_reduce_bind_group_layout: Arc::new(exponential_reduce_bind_group_layout),
-            gamma_reduce_pipeline: Arc::new(gamma_reduce_pipeline),
-            gamma_reduce_bind_group_layout: Arc::new(gamma_reduce_bind_group_layout),
-            beta_reduce_pipeline: Arc::new(beta_reduce_pipeline),
-            beta_reduce_bind_group_layout: Arc::new(beta_reduce_bind_group_layout),
-            inverse_gamma_reduce_pipeline: Arc::new(inverse_gamma_reduce_pipeline),
-            inverse_gamma_reduce_bind_group_layout: Arc::new(
-                inverse_gamma_reduce_bind_group_layout,
-            ),
-            uniform_reduce_pipeline: Arc::new(uniform_reduce_pipeline),
-            uniform_reduce_bind_group_layout: Arc::new(uniform_reduce_bind_group_layout),
-            cauchy_reduce_pipeline: Arc::new(cauchy_reduce_pipeline),
-            cauchy_reduce_bind_group_layout: Arc::new(cauchy_reduce_bind_group_layout),
-            student_t_reduce_pipeline: Arc::new(student_t_reduce_pipeline),
-            student_t_reduce_bind_group_layout: Arc::new(student_t_reduce_bind_group_layout),
-            lognormal_reduce_pipeline: Arc::new(lognormal_reduce_pipeline),
-            lognormal_reduce_bind_group_layout: Arc::new(lognormal_reduce_bind_group_layout),
-            bernoulli_reduce_pipeline: Arc::new(bernoulli_reduce_pipeline),
-            bernoulli_reduce_bind_group_layout: Arc::new(bernoulli_reduce_bind_group_layout),
-            binomial_reduce_pipeline: Arc::new(binomial_reduce_pipeline),
-            binomial_reduce_bind_group_layout: Arc::new(binomial_reduce_bind_group_layout),
-            poisson_reduce_pipeline: Arc::new(poisson_reduce_pipeline),
-            poisson_reduce_bind_group_layout: Arc::new(poisson_reduce_bind_group_layout),
-            negative_binomial_reduce_pipeline: Arc::new(negative_binomial_reduce_pipeline),
-            negative_binomial_reduce_bind_group_layout: Arc::new(
-                negative_binomial_reduce_bind_group_layout,
-            ),
-            categorical_reduce_pipeline: Arc::new(categorical_reduce_pipeline),
-            categorical_reduce_bind_group_layout: Arc::new(categorical_reduce_bind_group_layout),
-            normal_grad_reduce_pipeline: Arc::new(normal_grad_reduce_pipeline),
-            normal_grad_reduce_bind_group_layout: Arc::new(normal_grad_reduce_bind_group_layout),
-            half_normal_grad_reduce_pipeline: Arc::new(half_normal_grad_reduce_pipeline),
-            half_normal_grad_reduce_bind_group_layout: Arc::new(
-                half_normal_grad_reduce_bind_group_layout,
-            ),
-            exponential_grad_reduce_pipeline: Arc::new(exponential_grad_reduce_pipeline),
-            exponential_grad_reduce_bind_group_layout: Arc::new(
-                exponential_grad_reduce_bind_group_layout,
-            ),
-            beta_grad_reduce_pipeline: Arc::new(beta_grad_reduce_pipeline),
-            beta_grad_reduce_bind_group_layout: Arc::new(beta_grad_reduce_bind_group_layout),
-            gamma_grad_reduce_pipeline: Arc::new(gamma_grad_reduce_pipeline),
-            gamma_grad_reduce_bind_group_layout: Arc::new(gamma_grad_reduce_bind_group_layout),
-            inverse_gamma_grad_reduce_pipeline: Arc::new(inverse_gamma_grad_reduce_pipeline),
-            inverse_gamma_grad_reduce_bind_group_layout: Arc::new(
-                inverse_gamma_grad_reduce_bind_group_layout,
-            ),
-            student_t_grad_reduce_pipeline: Arc::new(student_t_grad_reduce_pipeline),
-            student_t_grad_reduce_bind_group_layout: Arc::new(
-                student_t_grad_reduce_bind_group_layout,
-            ),
-            cauchy_grad_reduce_pipeline: Arc::new(cauchy_grad_reduce_pipeline),
-            cauchy_grad_reduce_bind_group_layout: Arc::new(cauchy_grad_reduce_bind_group_layout),
-            lognormal_grad_reduce_pipeline: Arc::new(lognormal_grad_reduce_pipeline),
-            lognormal_grad_reduce_bind_group_layout: Arc::new(
-                lognormal_grad_reduce_bind_group_layout,
-            ),
+            // All pipelines start uninitialized - created on first access
+            normal: OnceLock::new(),
+            half_normal: OnceLock::new(),
+            normal_batch: OnceLock::new(),
+            normal_reduce: OnceLock::new(),
+            half_normal_reduce: OnceLock::new(),
+            exponential_reduce: OnceLock::new(),
+            gamma_reduce: OnceLock::new(),
+            beta_reduce: OnceLock::new(),
+            inverse_gamma_reduce: OnceLock::new(),
+            uniform_reduce: OnceLock::new(),
+            cauchy_reduce: OnceLock::new(),
+            student_t_reduce: OnceLock::new(),
+            lognormal_reduce: OnceLock::new(),
+            bernoulli_reduce: OnceLock::new(),
+            binomial_reduce: OnceLock::new(),
+            poisson_reduce: OnceLock::new(),
+            negative_binomial_reduce: OnceLock::new(),
+            categorical_reduce: OnceLock::new(),
+            normal_grad_reduce: OnceLock::new(),
+            half_normal_grad_reduce: OnceLock::new(),
+            exponential_grad_reduce: OnceLock::new(),
+            beta_grad_reduce: OnceLock::new(),
+            gamma_grad_reduce: OnceLock::new(),
+            inverse_gamma_grad_reduce: OnceLock::new(),
+            student_t_grad_reduce: OnceLock::new(),
+            cauchy_grad_reduce: OnceLock::new(),
+            lognormal_grad_reduce: OnceLock::new(),
+        })
+    }
+
+    // =========================================================================
+    // LAZY PIPELINE ACCESSORS
+    // =========================================================================
+
+    /// Get the Normal distribution pipeline + layout, compiling on first access
+    fn normal_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal.get_or_init(|| {
+            init_basic_pipeline(&self.device, include_str!("shaders/normal.wgsl"), "normal")
+        })
+    }
+
+    /// Get the HalfNormal distribution pipeline + layout, compiling on first access
+    fn half_normal_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.half_normal.get_or_init(|| {
+            init_basic_pipeline(
+                &self.device,
+                include_str!("shaders/half_normal.wgsl"),
+                "half_normal",
+            )
+        })
+    }
+
+    /// Get the Normal batch pipeline + layout, compiling on first access
+    fn normal_batch_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal_batch.get_or_init(|| {
+            let layout =
+                create_batch_4_binding_layout(&self.device, "normal_batch_bind_group_layout");
+            let pipeline = create_pipeline(
+                &self.device,
+                include_str!("shaders/normal_batch.wgsl"),
+                "normal_batch_pipeline",
+                &layout,
+            );
+            (Arc::new(pipeline), Arc::new(layout))
+        })
+    }
+
+    // --- Log-prob reduce lazy accessors ---
+
+    fn normal_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/normal_reduce.wgsl"),
+                "normal_reduce",
+            )
+        })
+    }
+
+    fn half_normal_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.half_normal_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/half_normal_reduce.wgsl"),
+                "half_normal_reduce",
+            )
+        })
+    }
+
+    fn exponential_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.exponential_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/exponential_reduce.wgsl"),
+                "exponential_reduce",
+            )
+        })
+    }
+
+    fn gamma_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.gamma_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/gamma_reduce.wgsl"),
+                "gamma_reduce",
+            )
+        })
+    }
+
+    fn beta_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.beta_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/beta_reduce.wgsl"),
+                "beta_reduce",
+            )
+        })
+    }
+
+    fn inverse_gamma_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.inverse_gamma_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/inverse_gamma_reduce.wgsl"),
+                "inverse_gamma_reduce",
+            )
+        })
+    }
+
+    fn uniform_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.uniform_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/uniform_reduce.wgsl"),
+                "uniform_reduce",
+            )
+        })
+    }
+
+    fn cauchy_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.cauchy_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/cauchy_reduce.wgsl"),
+                "cauchy_reduce",
+            )
+        })
+    }
+
+    fn student_t_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.student_t_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/student_t_reduce.wgsl"),
+                "student_t_reduce",
+            )
+        })
+    }
+
+    fn lognormal_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.lognormal_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/lognormal_reduce.wgsl"),
+                "lognormal_reduce",
+            )
+        })
+    }
+
+    fn bernoulli_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.bernoulli_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/bernoulli_reduce.wgsl"),
+                "bernoulli_reduce",
+            )
+        })
+    }
+
+    fn binomial_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.binomial_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/binomial_reduce.wgsl"),
+                "binomial_reduce",
+            )
+        })
+    }
+
+    fn poisson_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.poisson_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/poisson_reduce.wgsl"),
+                "poisson_reduce",
+            )
+        })
+    }
+
+    fn negative_binomial_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.negative_binomial_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/negative_binomial_reduce.wgsl"),
+                "negative_binomial_reduce",
+            )
+        })
+    }
+
+    fn categorical_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.categorical_reduce.get_or_init(|| {
+            let layout = create_categorical_reduce_layout(
+                &self.device,
+                "categorical_reduce_bind_group_layout",
+            );
+            let pipeline = create_pipeline(
+                &self.device,
+                include_str!("shaders/categorical_reduce.wgsl"),
+                "categorical_reduce_pipeline",
+                &layout,
+            );
+            (Arc::new(pipeline), Arc::new(layout))
+        })
+    }
+
+    // --- Gradient reduce lazy accessors ---
+
+    fn normal_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/normal_grad_reduce.wgsl"),
+                "normal_grad_reduce",
+            )
+        })
+    }
+
+    fn half_normal_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.half_normal_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/half_normal_grad_reduce.wgsl"),
+                "half_normal_grad_reduce",
+            )
+        })
+    }
+
+    fn exponential_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.exponential_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/exponential_grad_reduce.wgsl"),
+                "exponential_grad_reduce",
+            )
+        })
+    }
+
+    fn beta_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.beta_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/beta_grad_reduce.wgsl"),
+                "beta_grad_reduce",
+            )
+        })
+    }
+
+    fn gamma_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.gamma_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/gamma_grad_reduce.wgsl"),
+                "gamma_grad_reduce",
+            )
+        })
+    }
+
+    fn inverse_gamma_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.inverse_gamma_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/inverse_gamma_grad_reduce.wgsl"),
+                "inverse_gamma_grad_reduce",
+            )
+        })
+    }
+
+    fn student_t_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.student_t_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/student_t_grad_reduce.wgsl"),
+                "student_t_grad_reduce",
+            )
+        })
+    }
+
+    fn cauchy_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.cauchy_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/cauchy_grad_reduce.wgsl"),
+                "cauchy_grad_reduce",
+            )
+        })
+    }
+
+    fn lognormal_grad_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.lognormal_grad_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/lognormal_grad_reduce.wgsl"),
+                "lognormal_grad_reduce",
+            )
         })
     }
 
@@ -688,23 +916,31 @@ impl GpuContext {
     pub fn queue_clone(&self) -> Arc<Queue> {
         Arc::clone(&self.queue)
     }
+    /// Get a reference to the underlying device (avoids Arc clone for buffer creation)
+    pub fn device_ref(&self) -> &Device {
+        &self.device
+    }
+    /// Get a reference to the underlying queue (avoids Arc clone for buffer creation)
+    pub fn queue_ref(&self) -> &Queue {
+        &self.queue
+    }
     pub fn normal_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.normal_pipeline)
+        Arc::clone(&self.normal_lazy().0)
     }
     pub fn normal_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.normal_bind_group_layout)
+        Arc::clone(&self.normal_lazy().1)
     }
     pub fn half_normal_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.half_normal_pipeline)
+        Arc::clone(&self.half_normal_lazy().0)
     }
     pub fn half_normal_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.half_normal_bind_group_layout)
+        Arc::clone(&self.half_normal_lazy().1)
     }
     pub fn normal_batch_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.normal_batch_pipeline)
+        Arc::clone(&self.normal_batch_lazy().0)
     }
     pub fn normal_batch_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.normal_batch_bind_group_layout)
+        Arc::clone(&self.normal_batch_lazy().1)
     }
 
     // =========================================================================
@@ -712,94 +948,94 @@ impl GpuContext {
     // =========================================================================
 
     pub fn normal_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.normal_reduce_pipeline)
+        Arc::clone(&self.normal_reduce_lazy().0)
     }
     pub fn normal_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.normal_reduce_bind_group_layout)
+        Arc::clone(&self.normal_reduce_lazy().1)
     }
     pub fn half_normal_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.half_normal_reduce_pipeline)
+        Arc::clone(&self.half_normal_reduce_lazy().0)
     }
     pub fn half_normal_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.half_normal_reduce_bind_group_layout)
+        Arc::clone(&self.half_normal_reduce_lazy().1)
     }
     pub fn exponential_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.exponential_reduce_pipeline)
+        Arc::clone(&self.exponential_reduce_lazy().0)
     }
     pub fn exponential_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.exponential_reduce_bind_group_layout)
+        Arc::clone(&self.exponential_reduce_lazy().1)
     }
     pub fn gamma_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.gamma_reduce_pipeline)
+        Arc::clone(&self.gamma_reduce_lazy().0)
     }
     pub fn gamma_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.gamma_reduce_bind_group_layout)
+        Arc::clone(&self.gamma_reduce_lazy().1)
     }
     pub fn beta_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.beta_reduce_pipeline)
+        Arc::clone(&self.beta_reduce_lazy().0)
     }
     pub fn beta_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.beta_reduce_bind_group_layout)
+        Arc::clone(&self.beta_reduce_lazy().1)
     }
     pub fn inverse_gamma_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.inverse_gamma_reduce_pipeline)
+        Arc::clone(&self.inverse_gamma_reduce_lazy().0)
     }
     pub fn inverse_gamma_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.inverse_gamma_reduce_bind_group_layout)
+        Arc::clone(&self.inverse_gamma_reduce_lazy().1)
     }
     pub fn uniform_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.uniform_reduce_pipeline)
+        Arc::clone(&self.uniform_reduce_lazy().0)
     }
     pub fn uniform_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.uniform_reduce_bind_group_layout)
+        Arc::clone(&self.uniform_reduce_lazy().1)
     }
     pub fn cauchy_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.cauchy_reduce_pipeline)
+        Arc::clone(&self.cauchy_reduce_lazy().0)
     }
     pub fn cauchy_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.cauchy_reduce_bind_group_layout)
+        Arc::clone(&self.cauchy_reduce_lazy().1)
     }
     pub fn student_t_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.student_t_reduce_pipeline)
+        Arc::clone(&self.student_t_reduce_lazy().0)
     }
     pub fn student_t_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.student_t_reduce_bind_group_layout)
+        Arc::clone(&self.student_t_reduce_lazy().1)
     }
     pub fn lognormal_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.lognormal_reduce_pipeline)
+        Arc::clone(&self.lognormal_reduce_lazy().0)
     }
     pub fn lognormal_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.lognormal_reduce_bind_group_layout)
+        Arc::clone(&self.lognormal_reduce_lazy().1)
     }
     pub fn bernoulli_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.bernoulli_reduce_pipeline)
+        Arc::clone(&self.bernoulli_reduce_lazy().0)
     }
     pub fn bernoulli_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.bernoulli_reduce_bind_group_layout)
+        Arc::clone(&self.bernoulli_reduce_lazy().1)
     }
     pub fn binomial_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.binomial_reduce_pipeline)
+        Arc::clone(&self.binomial_reduce_lazy().0)
     }
     pub fn binomial_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.binomial_reduce_bind_group_layout)
+        Arc::clone(&self.binomial_reduce_lazy().1)
     }
     pub fn poisson_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.poisson_reduce_pipeline)
+        Arc::clone(&self.poisson_reduce_lazy().0)
     }
     pub fn poisson_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.poisson_reduce_bind_group_layout)
+        Arc::clone(&self.poisson_reduce_lazy().1)
     }
     pub fn negative_binomial_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.negative_binomial_reduce_pipeline)
+        Arc::clone(&self.negative_binomial_reduce_lazy().0)
     }
     pub fn negative_binomial_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.negative_binomial_reduce_bind_group_layout)
+        Arc::clone(&self.negative_binomial_reduce_lazy().1)
     }
     pub fn categorical_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.categorical_reduce_pipeline)
+        Arc::clone(&self.categorical_reduce_lazy().0)
     }
     pub fn categorical_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.categorical_reduce_bind_group_layout)
+        Arc::clone(&self.categorical_reduce_lazy().1)
     }
 
     // =========================================================================
@@ -807,58 +1043,58 @@ impl GpuContext {
     // =========================================================================
 
     pub fn normal_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.normal_grad_reduce_pipeline)
+        Arc::clone(&self.normal_grad_reduce_lazy().0)
     }
     pub fn normal_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.normal_grad_reduce_bind_group_layout)
+        Arc::clone(&self.normal_grad_reduce_lazy().1)
     }
     pub fn half_normal_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.half_normal_grad_reduce_pipeline)
+        Arc::clone(&self.half_normal_grad_reduce_lazy().0)
     }
     pub fn half_normal_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.half_normal_grad_reduce_bind_group_layout)
+        Arc::clone(&self.half_normal_grad_reduce_lazy().1)
     }
     pub fn exponential_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.exponential_grad_reduce_pipeline)
+        Arc::clone(&self.exponential_grad_reduce_lazy().0)
     }
     pub fn exponential_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.exponential_grad_reduce_bind_group_layout)
+        Arc::clone(&self.exponential_grad_reduce_lazy().1)
     }
     pub fn beta_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.beta_grad_reduce_pipeline)
+        Arc::clone(&self.beta_grad_reduce_lazy().0)
     }
     pub fn beta_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.beta_grad_reduce_bind_group_layout)
+        Arc::clone(&self.beta_grad_reduce_lazy().1)
     }
     pub fn gamma_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.gamma_grad_reduce_pipeline)
+        Arc::clone(&self.gamma_grad_reduce_lazy().0)
     }
     pub fn gamma_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.gamma_grad_reduce_bind_group_layout)
+        Arc::clone(&self.gamma_grad_reduce_lazy().1)
     }
     pub fn inverse_gamma_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.inverse_gamma_grad_reduce_pipeline)
+        Arc::clone(&self.inverse_gamma_grad_reduce_lazy().0)
     }
     pub fn inverse_gamma_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.inverse_gamma_grad_reduce_bind_group_layout)
+        Arc::clone(&self.inverse_gamma_grad_reduce_lazy().1)
     }
     pub fn student_t_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.student_t_grad_reduce_pipeline)
+        Arc::clone(&self.student_t_grad_reduce_lazy().0)
     }
     pub fn student_t_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.student_t_grad_reduce_bind_group_layout)
+        Arc::clone(&self.student_t_grad_reduce_lazy().1)
     }
     pub fn cauchy_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.cauchy_grad_reduce_pipeline)
+        Arc::clone(&self.cauchy_grad_reduce_lazy().0)
     }
     pub fn cauchy_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.cauchy_grad_reduce_bind_group_layout)
+        Arc::clone(&self.cauchy_grad_reduce_lazy().1)
     }
     pub fn lognormal_grad_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
-        Arc::clone(&self.lognormal_grad_reduce_pipeline)
+        Arc::clone(&self.lognormal_grad_reduce_lazy().0)
     }
     pub fn lognormal_grad_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
-        Arc::clone(&self.lognormal_grad_reduce_bind_group_layout)
+        Arc::clone(&self.lognormal_grad_reduce_lazy().1)
     }
 }
 
@@ -935,6 +1171,7 @@ pub async fn run_normal_kernel(
     buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = sender.send(r);
     });
+    poll_device(device);
     receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -1018,6 +1255,7 @@ pub async fn run_half_normal_kernel(
     buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = sender.send(r);
     });
+    poll_device(device);
     receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -1116,7 +1354,7 @@ pub async fn run_normal_batch_kernel(
         ],
     });
 
-    let workgroup_count = (count + 255) / 256;
+    let workgroup_count = count.div_ceil(256);
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("normal_batch_encoder"),
     });
@@ -1143,6 +1381,7 @@ pub async fn run_normal_batch_kernel(
     g_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = g_sender.send(r);
     });
+    poll_device(device);
     lp_receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -1195,7 +1434,7 @@ async fn run_reduce_kernel_impl<P: bytemuck::Pod>(
         usage: BufferUsages::STORAGE,
     });
 
-    let workgroup_count = (count + 255) / 256;
+    let workgroup_count = count.div_ceil(256);
     let partial_sums_size = (workgroup_count as u64) * 4;
     let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{}_partial_sums", label)),
@@ -1255,6 +1494,7 @@ async fn run_reduce_kernel_impl<P: bytemuck::Pod>(
     buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = sender.send(r);
     });
+    poll_device(device);
     receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -1474,6 +1714,7 @@ pub async fn run_cauchy_reduce_kernel(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_student_t_reduce_kernel(
     device: &Arc<Device>,
     queue: &Arc<Queue>,
@@ -1668,7 +1909,7 @@ pub async fn run_categorical_reduce_kernel(
         usage: BufferUsages::STORAGE,
     });
 
-    let workgroup_count = (count + 255) / 256;
+    let workgroup_count = count.div_ceil(256);
     let partial_sums_size = (workgroup_count as u64) * 4;
     let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("categorical_reduce_partial_sums"),
@@ -1732,6 +1973,7 @@ pub async fn run_categorical_reduce_kernel(
     buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = sender.send(r);
     });
+    poll_device(device);
     receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -1775,7 +2017,7 @@ async fn run_grad_reduce_kernel_impl<P: bytemuck::Pod>(
         usage: BufferUsages::STORAGE,
     });
 
-    let workgroup_count = (count + 255) / 256;
+    let workgroup_count = count.div_ceil(256);
     let partial_sums_size = (workgroup_count as u64) * 4;
     let partial_sums_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(&format!("{}_partial_sums", label)),
@@ -1835,6 +2077,7 @@ async fn run_grad_reduce_kernel_impl<P: bytemuck::Pod>(
     buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
         let _ = sender.send(r);
     });
+    poll_device(device);
     receiver
         .await
         .map_err(|_| "Channel cancelled")?
@@ -2002,6 +2245,7 @@ pub async fn run_inverse_gamma_grad_reduce_kernel(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_student_t_grad_reduce_kernel(
     device: &Arc<Device>,
     queue: &Arc<Queue>,
