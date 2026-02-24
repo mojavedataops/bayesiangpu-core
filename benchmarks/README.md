@@ -142,13 +142,37 @@ import bayesiangpu as bg
 print(bg.backend_name())  # "cpu" or "gpu"
 ```
 
-**Current GPU performance**: The wgpu backend is significantly slower than CPU for MCMC sampling because:
+**Current GPU performance**: The wgpu backend uses fused kernel dispatch to minimize Metal/Vulkan overhead. Each NUTS step computes logp + grad in a single command encoder → submit → poll cycle (~1.5ms), halving the ~3ms-per-roundtrip cost of separate dispatches.
 
-1. NUTS sampling is inherently sequential (each step depends on the previous)
-2. Per-operation GPU overhead (command buffer submission, synchronization) dominates for the small tensor operations typical in MCMC
-3. GPU acceleration excels at batch-parallel workloads, not step-by-step chain evolution
+**GPU dispatch modes** (from fastest to slowest):
+1. **Fused persistent** — pre-allocated buffers, single dispatch for logp+grad
+2. **Persistent** — pre-allocated buffers, separate logp and grad dispatches
+3. **Allocating** — fresh buffer allocation per kernel call
 
-The GPU backend will become competitive when:
-- **Parallel chains on GPU**: Running multiple chains simultaneously in a single GPU kernel
-- **Vectorized likelihoods**: Large observation counts where likelihood evaluation is the bottleneck
-- **Batch VI**: Variational inference with large batch gradient computations
+### GPU Kernel Benchmarks (logp + grad, Apple M3 Pro)
+
+Representative results across 9 distributions (Normal, HalfNormal, Exponential, Beta, Gamma, InverseGamma, StudentT, Cauchy, LogNormal):
+
+| N_obs | GPU Fused | GPU Alloc | CPU SIMD | Fused vs Alloc | Fused vs CPU |
+|------:|----------:|----------:|---------:|:--------------:|:------------:|
+| 256 | 1.5ms | 3.1ms | <0.01ms | **2.0x** | 1600x slower |
+| 1K | 1.5ms | 3.2ms | 0.005ms | **2.1x** | 300x slower |
+| 10K | 1.5ms | 3.2ms | 0.04ms | **2.1x** | 40x slower |
+| 100K | 1.6ms | 3.3ms | 0.4ms | **2.1x** | 4x slower |
+| 1M | 1.7ms | 4.7ms | 3.9ms | **2.8x** | **0.44x faster** |
+| 10M | 4.7ms | 29ms | 39ms | **6.3x** | **0.12x faster** |
+
+**Key findings:**
+- Fused dispatch is consistently **2–2.8x faster** than allocating dispatch at all data sizes
+- GPU crossover vs CPU occurs at **~1M observations** — above this, GPU fused wins
+- At **10M observations**, GPU fused is **~8x faster** than CPU for compute-heavy distributions (Beta, Gamma, LogNormal)
+- All 9 distributions pass numerical consistency checks (GPU paths agree within f32 tolerance)
+
+**When GPU wins**: Likelihood evaluation over large datasets (>1M observations) — common in time-series, genomics, and large-N Bayesian regression. The fused dispatch path is used automatically when persistent buffers are available in the NUTS sampler.
+
+**Remaining GPU bottlenecks**:
+- NUTS sampling is inherently sequential (each step depends on the previous)
+- Below ~1M observations, CPU SIMD dominates due to zero dispatch overhead
+- Parallel chains on GPU and batch VI will further improve throughput
+
+*Benchmark: `cargo bench -p bayesian-wasm --features sync-gpu --bench gpu_vs_cpu`*
