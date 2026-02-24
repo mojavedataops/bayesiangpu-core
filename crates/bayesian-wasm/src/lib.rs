@@ -191,6 +191,17 @@ struct DynamicModel {
     likelihood: Likelihood,
     /// Device for tensor creation
     device: WasmDevice,
+    /// Cached f32 observation data (avoids Vec<f64> -> Vec<f32> conversion per call)
+    #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+    observed_f32: Vec<f32>,
+    /// Persistent GPU buffers for reduce kernels (allocated once, reused per call).
+    /// Wrapped in Arc so DynamicModel can derive Clone (wgpu::Buffer is not Clone).
+    /// Safe because chains run sequentially and buffers are only mutated via queue.write_buffer.
+    #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+    gpu_buffers: Option<std::sync::Arc<gpu::PersistentGpuBuffers>>,
+    /// GPU context for accelerated likelihood computation (sync, native only)
+    #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+    gpu_ctx: Option<std::sync::Arc<gpu::sync::GpuContextSync>>,
 }
 
 impl DynamicModel {
@@ -220,6 +231,22 @@ impl DynamicModel {
             }
         }
 
+        // Use the global shared GPU context for accelerated likelihood computation.
+        // A single wgpu Device avoids Metal resource conflicts under parallel access.
+        #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+        let gpu_ctx = gpu::sync::GpuContextSync::global();
+
+        // Pre-compute f32 observation data for GPU path (avoids per-call conversion)
+        #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+        let observed_f32: Vec<f32> = spec.likelihood.observed.iter().map(|&x| x as f32).collect();
+
+        // Allocate persistent GPU buffers if GPU context is available
+        // 16 bytes covers most param structs (NormalBatchParams, StudentTReduceParams, etc.)
+        #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+        let gpu_buffers = gpu_ctx
+            .as_ref()
+            .map(|ctx| std::sync::Arc::new(ctx.create_persistent_buffers(&observed_f32, 16)));
+
         Self {
             prior_names,
             priors,
@@ -228,6 +255,12 @@ impl DynamicModel {
             param_names,
             likelihood: spec.likelihood,
             device,
+            #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+            observed_f32,
+            #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+            gpu_buffers,
+            #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+            gpu_ctx,
         }
     }
 
@@ -271,6 +304,64 @@ impl BayesianModel<WasmBackend> for DynamicModel {
 
     fn param_names(&self) -> Vec<String> {
         self.param_names.clone()
+    }
+
+    /// GPU-accelerated log_prob + gradient computation
+    ///
+    /// When the model has a GPU context and the likelihood has enough observations
+    /// (>= 256), this bypasses Burn's autodiff entirely:
+    /// - Priors: analytical log_prob + gradient on CPU (few parameters)
+    /// - Likelihood: GPU REDUCE kernels for log_prob + gradient (many observations)
+    ///
+    /// Falls back to None (autodiff) when GPU is unavailable or data is too small.
+    #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+    fn logp_and_grad_direct(&self, params: &[f32]) -> Option<(f64, Vec<f64>)> {
+        if let Some(ref gpu_ctx) = self.gpu_ctx {
+            if self.can_use_gpu() {
+                // Use persistent buffers for the fast path (same device as internal gpu_ctx)
+                let observed_f32 = &self.observed_f32;
+                let spec = &self.likelihood.distribution;
+                let buffers = self.gpu_buffers.as_deref();
+
+                let mut total_log_prob: f64 = 0.0;
+                let mut gradients: Vec<f64> = vec![0.0; params.len()];
+
+                for (idx, prior_spec) in self.priors.iter().enumerate() {
+                    let offset = self.prior_offsets[idx];
+                    let size = self.prior_sizes[idx];
+                    for j in 0..size {
+                        let param_val = params[offset + j];
+                        let (prior_logp, prior_grad) =
+                            self.compute_prior_logp_and_grad(param_val, prior_spec, params);
+                        total_log_prob += prior_logp;
+                        gradients[offset + j] += prior_grad;
+                    }
+                }
+
+                match self.compute_likelihood_gpu(
+                    params,
+                    observed_f32,
+                    spec,
+                    gpu_ctx.as_ref(),
+                    buffers,
+                ) {
+                    Ok((lik_logp, lik_param_idx, lik_grad)) => {
+                        total_log_prob += lik_logp;
+                        if let Some(idx) = lik_param_idx {
+                            gradients[idx] += lik_grad;
+                        }
+                        return Some((total_log_prob, gradients));
+                    }
+                    Err(_) => return None,
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(not(all(feature = "direct-gpu", feature = "sync-gpu")))]
+    fn logp_and_grad_direct(&self, _params: &[f32]) -> Option<(f64, Vec<f64>)> {
+        None
     }
 }
 
@@ -1066,39 +1157,39 @@ impl DynamicModel {
         }
 
         // Check if the likelihood distribution has a GPU kernel
-        match self.likelihood.distribution.dist_type.as_str() {
+        matches!(
+            self.likelihood.distribution.dist_type.as_str(),
             "Normal"
-            | "HalfNormal"
-            | "HalfCauchy"
-            | "Exponential"
-            | "Gamma"
-            | "Beta"
-            | "InverseGamma"
-            | "StudentT"
-            | "Cauchy"
-            | "LogNormal"
-            | "Bernoulli"
-            | "Binomial"
-            | "Poisson"
-            | "Laplace"
-            | "Logistic"
-            | "ChiSquared"
-            | "TruncatedNormal"
-            | "Weibull"
-            | "Pareto"
-            | "Gumbel"
-            | "HalfStudentT"
-            | "NegativeBinomial"
-            | "Categorical"
-            | "Geometric"
-            | "DiscreteUniform"
-            | "BetaBinomial"
-            | "ZeroInflatedPoisson"
-            | "ZeroInflatedNegativeBinomial"
-            | "Hypergeometric"
-            | "OrderedLogistic" => true,
-            _ => false,
-        }
+                | "HalfNormal"
+                | "HalfCauchy"
+                | "Exponential"
+                | "Gamma"
+                | "Beta"
+                | "InverseGamma"
+                | "StudentT"
+                | "Cauchy"
+                | "LogNormal"
+                | "Bernoulli"
+                | "Binomial"
+                | "Poisson"
+                | "Laplace"
+                | "Logistic"
+                | "ChiSquared"
+                | "TruncatedNormal"
+                | "Weibull"
+                | "Pareto"
+                | "Gumbel"
+                | "HalfStudentT"
+                | "NegativeBinomial"
+                | "Categorical"
+                | "Geometric"
+                | "DiscreteUniform"
+                | "BetaBinomial"
+                | "ZeroInflatedPoisson"
+                | "ZeroInflatedNegativeBinomial"
+                | "Hypergeometric"
+                | "OrderedLogistic"
+        )
     }
 
     /// Compute log probability and gradient using GPU for likelihood (sync version)
@@ -1108,13 +1199,13 @@ impl DynamicModel {
     /// - Likelihood log_prob and gradients via GPU reduce kernels (many values)
     ///
     /// Returns (log_prob, gradient_vector) or falls back to autodiff if GPU unavailable.
+    #[allow(dead_code)] // Used by tests with external GPU contexts
     pub fn logp_and_grad_gpu(
         &self,
         params: &[f32],
         gpu_ctx: &gpu::sync::GpuContextSync,
     ) -> Result<(f64, Vec<f64>), String> {
-        let observed = &self.likelihood.observed;
-        let observed_f32: Vec<f32> = observed.iter().map(|&x| x as f32).collect();
+        let observed_f32 = &self.observed_f32;
         let spec = &self.likelihood.distribution;
 
         // Step 1: Compute prior log_prob and gradients
@@ -1136,8 +1227,11 @@ impl DynamicModel {
 
         // Step 2: Compute likelihood log_prob and gradient using GPU
         // Find which parameter is the "location" parameter for the likelihood
+        // Note: persistent buffers are NOT used here because the caller may pass
+        // a different GPU context than the one the buffers were created on.
+        // Use logp_and_grad_direct() for the fast persistent-buffer path.
         let (lik_logp, lik_param_idx, lik_grad) =
-            self.compute_likelihood_gpu(params, &observed_f32, spec, gpu_ctx)?;
+            self.compute_likelihood_gpu(params, observed_f32, spec, gpu_ctx, None)?;
 
         total_log_prob += lik_logp;
         if let Some(idx) = lik_param_idx {
@@ -1303,7 +1397,7 @@ impl DynamicModel {
                     let ax = x.abs();
                     let t = 1.0 / (1.0 + 0.3275911 * ax);
                     let poly = t
-                        * (0.254_829_59_f32
+                        * (0.254_829_6_f32
                             + t * (-0.284_496_74_f32
                                 + t * (1.421_413_7_f32
                                     + t * (-1.453_152_f32 + t * 1.061_405_4_f32))));
@@ -1521,9 +1615,9 @@ impl DynamicModel {
 
                 // Compute full log density
                 let mut log_diag_sum = 0.0_f64;
-                for i in 1..dim {
+                for (i, &dsq) in diag_sq.iter().enumerate().take(dim).skip(1) {
                     let weight = (dim as f64 - i as f64 - 1.0) + 2.0 * (eta - 1.0);
-                    log_diag_sum += weight * 0.5 * diag_sq[i].ln();
+                    log_diag_sum += weight * 0.5 * dsq.ln();
                 }
 
                 // Normalizing constant
@@ -1580,21 +1674,34 @@ impl DynamicModel {
         observed: &[f32],
         spec: &DistributionSpec,
         gpu_ctx: &gpu::sync::GpuContextSync,
+        buffers: Option<&gpu::PersistentGpuBuffers>,
     ) -> Result<(f64, Option<usize>, f64), String> {
         match spec.dist_type.as_str() {
             "Normal" => {
                 let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
                 let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
 
-                let log_prob = gpu_ctx.run_normal_reduce(observed, loc_val, scale)? as f64;
-                let grad = gpu_ctx.run_normal_grad_reduce(observed, loc_val, scale)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_normal_reduce_persistent(b, loc_val, scale)? as f64
+                } else {
+                    gpu_ctx.run_normal_reduce(observed, loc_val, scale)? as f64
+                };
+                let grad = if let Some(b) = buffers {
+                    gpu_ctx.run_normal_grad_reduce_persistent(b, loc_val, scale)? as f64
+                } else {
+                    gpu_ctx.run_normal_grad_reduce(observed, loc_val, scale)? as f64
+                };
 
                 Ok((log_prob, loc_idx, grad))
             }
             "HalfNormal" => {
                 let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
 
-                let log_prob = gpu_ctx.run_half_normal_reduce(observed, scale)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_half_normal_reduce_persistent(b, scale)? as f64
+                } else {
+                    gpu_ctx.run_half_normal_reduce(observed, scale)? as f64
+                };
                 // HalfNormal gradient is w.r.t. data, not a model parameter
                 // For now, return 0 gradient contribution
                 Ok((log_prob, None, 0.0))
@@ -1603,8 +1710,16 @@ impl DynamicModel {
                 let (lambda_val, lambda_idx) =
                     self.resolve_param_value(params, &spec.params, "rate");
 
-                let log_prob = gpu_ctx.run_exponential_reduce(observed, lambda_val)? as f64;
-                let grad = gpu_ctx.run_exponential_grad_reduce(observed, lambda_val)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_exponential_reduce_persistent(b, lambda_val)? as f64
+                } else {
+                    gpu_ctx.run_exponential_reduce(observed, lambda_val)? as f64
+                };
+                let grad = if let Some(b) = buffers {
+                    gpu_ctx.run_exponential_grad_reduce_persistent(b, lambda_val)? as f64
+                } else {
+                    gpu_ctx.run_exponential_grad_reduce(observed, lambda_val)? as f64
+                };
 
                 Ok((log_prob, lambda_idx, grad))
             }
@@ -1613,8 +1728,16 @@ impl DynamicModel {
                     self.resolve_param_value(params, &spec.params, "shape");
                 let beta = self.get_param_f64(&spec.params, "rate", 1.0) as f32;
 
-                let log_prob = gpu_ctx.run_gamma_reduce(observed, alpha_val, beta)? as f64;
-                let grad = gpu_ctx.run_gamma_grad_reduce(observed, alpha_val, beta)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_gamma_reduce_persistent(b, alpha_val, beta)? as f64
+                } else {
+                    gpu_ctx.run_gamma_reduce(observed, alpha_val, beta)? as f64
+                };
+                let grad = if let Some(b) = buffers {
+                    gpu_ctx.run_gamma_grad_reduce_persistent(b, alpha_val, beta)? as f64
+                } else {
+                    gpu_ctx.run_gamma_grad_reduce(observed, alpha_val, beta)? as f64
+                };
 
                 Ok((log_prob, alpha_idx, grad))
             }
@@ -1623,15 +1746,27 @@ impl DynamicModel {
                     self.resolve_param_value(params, &spec.params, "alpha");
                 let beta = self.get_param_f64(&spec.params, "beta", 1.0) as f32;
 
-                let log_prob = gpu_ctx.run_beta_reduce(observed, alpha_val, beta)? as f64;
-                let grad = gpu_ctx.run_beta_grad_reduce(observed, alpha_val, beta)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_beta_reduce_persistent(b, alpha_val, beta)? as f64
+                } else {
+                    gpu_ctx.run_beta_reduce(observed, alpha_val, beta)? as f64
+                };
+                let grad = if let Some(b) = buffers {
+                    gpu_ctx.run_beta_grad_reduce_persistent(b, alpha_val, beta)? as f64
+                } else {
+                    gpu_ctx.run_beta_grad_reduce(observed, alpha_val, beta)? as f64
+                };
 
                 Ok((log_prob, alpha_idx, grad))
             }
             "Bernoulli" => {
                 let (p_val, p_idx) = self.resolve_param_value(params, &spec.params, "p");
 
-                let log_prob = gpu_ctx.run_bernoulli_reduce(observed, p_val)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_bernoulli_reduce_persistent(b, p_val)? as f64
+                } else {
+                    gpu_ctx.run_bernoulli_reduce(observed, p_val)? as f64
+                };
                 // Bernoulli gradient: d/dp log(Bernoulli) = y/p - (1-y)/(1-p)
                 // We don't have a dedicated gradient kernel, so compute analytically
                 let mut grad = 0.0f64;
@@ -1648,7 +1783,11 @@ impl DynamicModel {
             "Poisson" => {
                 let (rate_val, rate_idx) = self.resolve_param_value(params, &spec.params, "rate");
 
-                let log_prob = gpu_ctx.run_poisson_reduce(observed, rate_val)? as f64;
+                let log_prob = if let Some(b) = buffers {
+                    gpu_ctx.run_poisson_reduce_persistent(b, rate_val)? as f64
+                } else {
+                    gpu_ctx.run_poisson_reduce(observed, rate_val)? as f64
+                };
                 // Poisson gradient: d/d_rate log(Poisson) = k/rate - 1
                 let mut grad = 0.0f64;
                 for &y in observed {
@@ -4677,14 +4816,15 @@ mod tests {
 
         #[test]
         fn test_gpu_logp_and_grad() {
-            // Skip if no GPU available
-            let gpu_ctx = match gpu::sync::GpuContextSync::new() {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    eprintln!("Skipping GPU test - no GPU: {}", e);
+            // Use the global shared GPU context to avoid Metal resource conflicts
+            let gpu_ctx_arc = match gpu::sync::GpuContextSync::global() {
+                Some(ctx) => ctx,
+                None => {
+                    eprintln!("Skipping GPU test - no GPU");
                     return;
                 }
             };
+            let gpu_ctx = gpu_ctx_arc.as_ref();
 
             // Create a simple Normal-Normal model with enough data to use GPU
             let model_json = r#"{
@@ -4769,14 +4909,15 @@ mod tests {
 
         #[test]
         fn test_gpu_vs_cpu_consistency() {
-            // Skip if no GPU available
-            let gpu_ctx = match gpu::sync::GpuContextSync::new() {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    eprintln!("Skipping GPU test - no GPU: {}", e);
+            // Use the global shared GPU context to avoid Metal resource conflicts
+            let gpu_ctx_arc = match gpu::sync::GpuContextSync::global() {
+                Some(ctx) => ctx,
+                None => {
+                    eprintln!("Skipping GPU test - no GPU");
                     return;
                 }
             };
+            let gpu_ctx = gpu_ctx_arc.as_ref();
 
             // Create model with data above GPU threshold
             let data: Vec<f64> = (0..300).map(|i| 2.0 + 0.1 * ((i % 10) as f64)).collect();
@@ -4835,6 +4976,92 @@ mod tests {
                 "Gradient difference too large: {}",
                 grad_diff
             );
+        }
+
+        #[test]
+        fn test_nuts_uses_gpu_via_logp_and_grad_direct() {
+            // Verify the full integration chain:
+            // logp_and_grad() -> logp_and_grad_direct() -> GPU REDUCE kernels
+            //
+            // This proves that when NUTS calls logp_and_grad(), it transparently
+            // uses GPU for the likelihood computation.
+            let data: Vec<f64> = (0..300).map(|i| 3.0 + 0.01 * (i as f64)).collect();
+            let model_json = format!(
+                r#"{{
+                "priors": [
+                    {{
+                        "name": "mu",
+                        "distribution": {{
+                            "type": "Normal",
+                            "params": {{"loc": 0, "scale": 10}}
+                        }}
+                    }}
+                ],
+                "likelihood": {{
+                    "distribution": {{
+                        "type": "Normal",
+                        "params": {{"loc": "mu", "scale": 1}}
+                    }},
+                    "observed": {:?}
+                }}
+            }}"#,
+                data
+            );
+
+            let model_spec: ModelSpec = serde_json::from_str(&model_json).unwrap();
+            let device = backend::get_device_or_init();
+            let model = DynamicModel::new(model_spec, device);
+
+            // 1. GPU context initialized
+            assert!(model.gpu_ctx.is_some(), "GPU context should be initialized");
+
+            // 2. GPU path active for large data
+            assert!(
+                model.can_use_gpu(),
+                "Model should use GPU for 300 observations"
+            );
+
+            // 3. logp_and_grad_direct returns Some (GPU path taken)
+            let test_params = [3.0f32];
+            let direct_result = model.logp_and_grad_direct(&test_params);
+            assert!(
+                direct_result.is_some(),
+                "logp_and_grad_direct should return Some when GPU is available"
+            );
+
+            let (gpu_logp, gpu_grad) = direct_result.unwrap();
+            // Sanity check: log_prob should be negative
+            assert!(
+                gpu_logp < 0.0,
+                "Log prob should be negative, got {}",
+                gpu_logp
+            );
+            assert_eq!(gpu_grad.len(), 1, "Should have 1 gradient element");
+            assert!(gpu_grad[0].is_finite(), "Gradient should be finite");
+
+            // 4. logp_and_grad() (the sampler entry point) dispatches to GPU
+            let params_tensor =
+                burn::prelude::Tensor::<WasmBackend, 1>::from_floats([3.0f32], &device);
+            let (sampler_logp, sampler_grad) =
+                bayesian_sampler::model::logp_and_grad(&model, params_tensor);
+
+            // Should match GPU result exactly (same code path)
+            assert!(
+                (sampler_logp - gpu_logp).abs() < 1e-6,
+                "logp_and_grad should dispatch to GPU: sampler={}, gpu={}",
+                sampler_logp,
+                gpu_logp
+            );
+            assert!(
+                (sampler_grad[0] - gpu_grad[0]).abs() < 1e-6,
+                "Gradient should match: sampler={}, gpu={}",
+                sampler_grad[0],
+                gpu_grad[0]
+            );
+
+            println!("GPU-NUTS integration verified:");
+            println!("  logp_and_grad -> logp_and_grad_direct -> GPU REDUCE kernels");
+            println!("  logp={:.4}, grad={:.4}", gpu_logp, gpu_grad[0]);
         }
     }
 

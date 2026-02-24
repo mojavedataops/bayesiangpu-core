@@ -103,6 +103,29 @@ pub trait BayesianModel<B: AutodiffBackend>: Send + Sync {
         let device = unconstrained.device();
         Tensor::<B, 1>::from_floats([0.0f32], &device)
     }
+
+    /// Compute log probability and gradient directly without autodiff
+    ///
+    /// Models that have an optimized (e.g., GPU-accelerated) path for computing
+    /// log_prob and its gradient can override this method. When this returns
+    /// `Some((logp, grad))`, the sampler will use these values directly instead
+    /// of building an autodiff computation graph.
+    ///
+    /// This is the primary integration point for GPU REDUCE kernels: the model
+    /// computes priors analytically on CPU and dispatches likelihood sums to
+    /// GPU compute shaders, bypassing Burn's autodiff entirely.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - Flattened parameter vector as f32 values
+    ///
+    /// # Returns
+    ///
+    /// `Some((log_prob, gradient_vector))` if the model has an optimized path,
+    /// `None` to fall back to autodiff via `log_prob()` + `.backward()`.
+    fn logp_and_grad_direct(&self, _params: &[f32]) -> Option<(f64, Vec<f64>)> {
+        None
+    }
 }
 
 /// Compute log probability with Jacobian adjustment for transformations
@@ -154,7 +177,15 @@ where
     B: AutodiffBackend,
     M: BayesianModel<B>,
 {
-    // Enable gradient tracking
+    // Try the direct (GPU-accelerated) path first.
+    // This bypasses Burn's autodiff entirely when the model provides
+    // an optimized implementation (e.g., GPU REDUCE kernels for likelihood).
+    let params_f32: Vec<f32> = params.clone().into_data().to_vec().unwrap();
+    if let Some(result) = model.logp_and_grad_direct(&params_f32) {
+        return result;
+    }
+
+    // Fall back to autodiff path
     let params = params.require_grad();
 
     // Forward pass - compute log probability
