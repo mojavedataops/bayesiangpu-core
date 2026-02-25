@@ -1,12 +1,13 @@
 //! Benchmark: GPU REDUCE kernels vs CPU for log_prob + gradient computation
 //!
-//! Compares four paths across 9 distributions (Normal, HalfNormal, Exponential,
+//! Compares five paths across 9 distributions (Normal, HalfNormal, Exponential,
 //! Beta, Gamma, InverseGamma, StudentT, Cauchy, LogNormal):
 //!
-//!   1. GPU (alloc)      -- creates GPU buffers per call (baseline)
-//!   2. GPU (persistent) -- reuses pre-allocated buffers, writes params in-place
-//!   3. GPU (fused)      -- single command encoder + submit for logp and grad
-//!   4. CPU (SIMD)       -- auto-vectorized f32 loop on host
+//!   1. GPU (alloc)        -- creates GPU buffers per call (baseline)
+//!   2. GPU (persistent)   -- reuses pre-allocated buffers, writes params in-place
+//!   3. GPU (2-pass fused) -- single command encoder with separate logp + grad shaders
+//!   4. GPU (1-pass fused) -- single shader computing both logp + grad, halves memory reads
+//!   5. CPU (SIMD)         -- auto-vectorized f32 loop on host
 //!
 //! Run with:
 //!   cargo bench -p bayesian-wasm --features sync-gpu --bench gpu_vs_cpu
@@ -178,7 +179,7 @@ fn cpu_lognormal_grad_sum(x: &[f32], mu: f32, sigma: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// Holds all function pointers needed to benchmark one distribution across
-/// the four paths (GPU alloc, GPU persistent, GPU fused, CPU).
+/// the five paths (GPU alloc, GPU persistent, GPU two-pass fused, GPU single-pass fused, CPU).
 struct DistBench {
     name: &'static str,
     header: &'static str,
@@ -186,6 +187,7 @@ struct DistBench {
     gpu_alloc: fn(&GpuContextSync, &[f32]) -> (f32, f32),
     gpu_persistent: fn(&GpuContextSync, &PersistentGpuBuffers) -> (f32, f32),
     gpu_fused: fn(&GpuContextSync, &PersistentGpuBuffers) -> (f32, f32),
+    gpu_single_pass: fn(&GpuContextSync, &PersistentGpuBuffers) -> (f32, f32),
     cpu: fn(&[f32]) -> (f32, f32),
 }
 
@@ -262,6 +264,10 @@ fn build_dist_benches() -> Vec<DistBench> {
                 let r = ctx.run_normal_fused_persistent(buf, 2.0, 1.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_normal_single_pass_fused(buf, 2.0, 1.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
             cpu: |x| {
                 let lp = cpu_normal_logp_sum(x, 2.0, 1.0);
                 let gr = cpu_normal_grad_sum(x, 2.0, 1.0);
@@ -287,6 +293,10 @@ fn build_dist_benches() -> Vec<DistBench> {
             },
             gpu_fused: |ctx, buf| {
                 let r = ctx.run_half_normal_fused_persistent(buf, 1.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_half_normal_single_pass_fused(buf, 1.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
             cpu: |x| {
@@ -316,6 +326,10 @@ fn build_dist_benches() -> Vec<DistBench> {
                 let r = ctx.run_exponential_fused_persistent(buf, 1.5).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_exponential_single_pass_fused(buf, 1.5).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
             cpu: |x| {
                 let lp = cpu_exponential_logp_sum(x, 1.5);
                 let gr = cpu_exponential_grad_sum(x, 1.5);
@@ -341,6 +355,10 @@ fn build_dist_benches() -> Vec<DistBench> {
                 let r = ctx.run_beta_fused_persistent(buf, 2.0, 5.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_beta_single_pass_fused(buf, 2.0, 5.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
             cpu: |x| {
                 let lp = cpu_beta_logp_sum(x, 2.0, 5.0);
                 let gr = cpu_beta_grad_sum(x, 2.0, 5.0);
@@ -364,6 +382,10 @@ fn build_dist_benches() -> Vec<DistBench> {
             },
             gpu_fused: |ctx, buf| {
                 let r = ctx.run_gamma_fused_persistent(buf, 2.0, 1.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_gamma_single_pass_fused(buf, 2.0, 1.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
             cpu: |x| {
@@ -394,6 +416,12 @@ fn build_dist_benches() -> Vec<DistBench> {
             gpu_fused: |ctx, buf| {
                 let r = ctx
                     .run_inverse_gamma_fused_persistent(buf, 3.0, 2.0)
+                    .unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx
+                    .run_inverse_gamma_single_pass_fused(buf, 3.0, 2.0)
                     .unwrap();
                 (r.total_log_prob, r.total_grad)
             },
@@ -428,6 +456,12 @@ fn build_dist_benches() -> Vec<DistBench> {
                     .unwrap();
                 (r.total_log_prob, r.total_grad)
             },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx
+                    .run_student_t_single_pass_fused(buf, 4.0, 0.0, 1.0)
+                    .unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
             cpu: |x| {
                 let lp = cpu_student_t_logp_sum(x, 0.0, 1.0, 4.0);
                 let gr = cpu_student_t_grad_sum(x, 0.0, 1.0, 4.0);
@@ -455,6 +489,10 @@ fn build_dist_benches() -> Vec<DistBench> {
                 let r = ctx.run_cauchy_fused_persistent(buf, 0.0, 1.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_cauchy_single_pass_fused(buf, 0.0, 1.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
             cpu: |x| {
                 let lp = cpu_cauchy_logp_sum(x, 0.0, 1.0);
                 let gr = cpu_cauchy_grad_sum(x, 0.0, 1.0);
@@ -480,6 +518,10 @@ fn build_dist_benches() -> Vec<DistBench> {
             },
             gpu_fused: |ctx, buf| {
                 let r = ctx.run_lognormal_fused_persistent(buf, 0.0, 1.0).unwrap();
+                (r.total_log_prob, r.total_grad)
+            },
+            gpu_single_pass: |ctx, buf| {
+                let r = ctx.run_lognormal_single_pass_fused(buf, 0.0, 1.0).unwrap();
                 (r.total_log_prob, r.total_grad)
             },
             cpu: |x| {
@@ -539,23 +581,24 @@ fn main() {
     );
     println!();
 
-    // Max params struct size across all distributions (StudentT is 16 bytes)
-    let max_params_size: u64 = 16;
+    // Max params struct size across all distributions (StudentT is 32 bytes with log_norm + padding)
+    let max_params_size: u64 = 32;
 
     for dist in &dists {
         println!();
         println!("=== {} ===", dist.header);
         println!(
-            "{:<12} {:>16} {:>16} {:>16} {:>12} {:>11} {:>11}",
+            "{:<12} {:>16} {:>16} {:>16} {:>18} {:>12} {:>11} {:>11}",
             "N_obs",
             "GPU alloc (us)",
             "GPU persist (us)",
-            "GPU fused (us)",
+            "GPU 2pass (us)",
+            "GPU 1pass (us)",
             "CPU (us)",
-            "Fused/Alloc",
-            "Fused/CPU"
+            "1pass/Alloc",
+            "1pass/CPU"
         );
-        println!("{}", "-".repeat(98));
+        println!("{}", "-".repeat(120));
 
         for &n_obs in DATA_SIZES {
             let x_values = (dist.generate_data)(n_obs);
@@ -575,34 +618,39 @@ fn main() {
             let (gpu_persist_time, _) = bench_fn(|| (dist.gpu_persistent)(ctx_ref, buf_ref));
             let persist_us = us_per_call(gpu_persist_time);
 
-            // 3. GPU fused path
+            // 3. GPU two-pass fused path
             let (gpu_fused_time, _) = bench_fn(|| (dist.gpu_fused)(ctx_ref, buf_ref));
             let fused_us = us_per_call(gpu_fused_time);
 
-            // 4. CPU SIMD path
+            // 4. GPU single-pass fused path
+            let (gpu_single_time, _) = bench_fn(|| (dist.gpu_single_pass)(ctx_ref, buf_ref));
+            let single_us = us_per_call(gpu_single_time);
+
+            // 5. CPU SIMD path
             let (cpu_time, _) = bench_fn(|| (dist.cpu)(x_ref));
             let cpu_us = us_per_call(cpu_time);
 
-            let fused_vs_alloc = if fused_us > 0.0 {
-                alloc_us / fused_us
+            let single_vs_alloc = if single_us > 0.0 {
+                alloc_us / single_us
             } else {
                 0.0
             };
-            let fused_vs_cpu = if cpu_us > 0.0 {
-                fused_us / cpu_us
+            let single_vs_cpu = if single_us > 0.0 {
+                cpu_us / single_us
             } else {
-                f64::INFINITY
+                0.0
             };
 
             println!(
-                "{:<12} {:>14.0}us {:>14.0}us {:>14.0}us {:>10.0}us {:>10.2}x {:>10.2}x",
+                "{:<12} {:>14.0}us {:>14.0}us {:>14.0}us {:>16.0}us {:>10.0}us {:>10.2}x {:>10.2}x",
                 format_n(n_obs),
                 alloc_us,
                 persist_us,
                 fused_us,
+                single_us,
                 cpu_us,
-                fused_vs_alloc,
-                fused_vs_cpu,
+                single_vs_alloc,
+                single_vs_cpu,
             );
         }
     }
@@ -623,21 +671,26 @@ fn main() {
         let (alloc_lp, alloc_gr) = (dist.gpu_alloc)(&ctx, &x_values);
         let (persist_lp, persist_gr) = (dist.gpu_persistent)(&ctx, &buffers);
         let (fused_lp, fused_gr) = (dist.gpu_fused)(&ctx, &buffers);
+        let (single_lp, single_gr) = (dist.gpu_single_pass)(&ctx, &buffers);
         let (cpu_lp, cpu_gr) = (dist.cpu)(&x_values);
 
         println!("--- {} ---", dist.name);
         println!(
-            "  logp:  alloc={:.4}  persist={:.4}  fused={:.4}  cpu={:.4}",
-            alloc_lp, persist_lp, fused_lp, cpu_lp,
+            "  logp:  alloc={:.4}  persist={:.4}  2pass={:.4}  1pass={:.4}  cpu={:.4}",
+            alloc_lp, persist_lp, fused_lp, single_lp, cpu_lp,
         );
         println!(
-            "  grad:  alloc={:.4}  persist={:.4}  fused={:.4}  cpu={:.4}",
-            alloc_gr, persist_gr, fused_gr, cpu_gr,
+            "  grad:  alloc={:.4}  persist={:.4}  2pass={:.4}  1pass={:.4}  cpu={:.4}",
+            alloc_gr, persist_gr, fused_gr, single_gr, cpu_gr,
         );
 
         // Check GPU paths agree with each other (allow f32 tolerance)
-        let lp_ok = (alloc_lp - persist_lp).abs() < 1.0 && (alloc_lp - fused_lp).abs() < 1.0;
-        let gr_ok = (alloc_gr - persist_gr).abs() < 1.0 && (alloc_gr - fused_gr).abs() < 1.0;
+        let lp_ok = (alloc_lp - persist_lp).abs() < 1.0
+            && (alloc_lp - fused_lp).abs() < 1.0
+            && (alloc_lp - single_lp).abs() < 1.0;
+        let gr_ok = (alloc_gr - persist_gr).abs() < 1.0
+            && (alloc_gr - fused_gr).abs() < 1.0
+            && (alloc_gr - single_gr).abs() < 1.0;
 
         if lp_ok && gr_ok {
             println!("  [PASS] GPU paths agree within tolerance");
@@ -650,9 +703,7 @@ fn main() {
 
 /// Format large numbers with underscores for readability
 fn format_n(n: usize) -> String {
-    if n >= 10_000_000 {
-        format!("{}M", n / 1_000_000)
-    } else if n >= 1_000_000 {
+    if n >= 1_000_000 {
         format!("{}M", n / 1_000_000)
     } else if n >= 1_000 {
         format!("{}K", n / 1_000)

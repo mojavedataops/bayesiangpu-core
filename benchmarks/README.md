@@ -142,37 +142,60 @@ import bayesiangpu as bg
 print(bg.backend_name())  # "cpu" or "gpu"
 ```
 
-**Current GPU performance**: The wgpu backend uses fused kernel dispatch to minimize Metal/Vulkan overhead. Each NUTS step computes logp + grad in a single command encoder → submit → poll cycle (~1.5ms), halving the ~3ms-per-roundtrip cost of separate dispatches.
+**Current GPU performance**: The wgpu backend is heavily optimized for likelihood evaluation throughput:
+- **Single-pass fused shaders** compute logp + grad in one kernel (halving memory bandwidth)
+- **Loop coarsening** (4 elements/thread) reduces workgroup count by 4x
+- **Bind group caching** eliminates per-dispatch CPU allocation
+- **Pre-computed normalization constants** (lgamma etc.) avoid redundant GPU math
+- **Second-pass GPU reduction** for large partial sum arrays (N > 262K)
+- **Multi-chain batched dispatch** runs all chains in a single submit+poll cycle
+- **f64 accumulation** on CPU readback for precision at large N
 
 **GPU dispatch modes** (from fastest to slowest):
-1. **Fused persistent** — pre-allocated buffers, single dispatch for logp+grad
-2. **Persistent** — pre-allocated buffers, separate logp and grad dispatches
-3. **Allocating** — fresh buffer allocation per kernel call
+1. **Single-pass fused** — one shader computes both logp+grad, pre-allocated buffers
+2. **Two-pass fused** — separate logp and grad shaders, single submit+poll
+3. **Persistent** — pre-allocated buffers, separate dispatches
+4. **Allocating** — fresh buffer allocation per kernel call
 
 ### GPU Kernel Benchmarks (logp + grad, Apple M3 Pro)
 
-Representative results across 9 distributions (Normal, HalfNormal, Exponential, Beta, Gamma, InverseGamma, StudentT, Cauchy, LogNormal):
+Results across 9 distributions (Normal, HalfNormal, Exponential, Beta, Gamma, InverseGamma, StudentT, Cauchy, LogNormal). "GPU 1-pass" = single-pass fused with all optimizations.
 
-| N_obs | GPU Fused | GPU Alloc | CPU SIMD | Fused vs Alloc | Fused vs CPU |
-|------:|----------:|----------:|---------:|:--------------:|:------------:|
-| 256 | 1.5ms | 3.1ms | <0.01ms | **2.0x** | 1600x slower |
-| 1K | 1.5ms | 3.2ms | 0.005ms | **2.1x** | 300x slower |
-| 10K | 1.5ms | 3.2ms | 0.04ms | **2.1x** | 40x slower |
-| 100K | 1.6ms | 3.3ms | 0.4ms | **2.1x** | 4x slower |
-| 1M | 1.7ms | 4.7ms | 3.9ms | **2.8x** | **0.44x faster** |
-| 10M | 4.7ms | 29ms | 39ms | **6.3x** | **0.12x faster** |
+| N_obs | GPU 1-pass | GPU Alloc | CPU SIMD | 1-pass vs Alloc | 1-pass vs CPU |
+|------:|-----------:|----------:|---------:|:---------------:|:-------------:|
+| 256 | 1.5ms | 3.0ms | <0.01ms | **2.0x** | CPU wins |
+| 1K | 1.5ms | 3.1ms | 0.005ms | **2.1x** | CPU wins |
+| 10K | 1.5ms | 3.2ms | 0.04ms | **2.1x** | CPU wins |
+| 100K | 1.5ms | 3.4ms | 0.4ms | **2.3x** | CPU wins |
+| 1M | 1.6ms | 4.7ms | 3.9ms | **2.9x** | **1.3x** |
+| 10M | 2.5ms | 29ms | 42ms | **11.5x** | **16.8x** |
+
+### Per-Distribution GPU Speedup at 10M Observations
+
+| Distribution | GPU 1-pass | CPU | GPU vs CPU |
+|---|---:|---:|:---:|
+| Normal | 2.1ms | 23ms | **11.2x** |
+| HalfNormal | 2.5ms | 20ms | **8.1x** |
+| Exponential | 2.4ms | 20ms | **8.1x** |
+| Beta | 2.4ms | 74ms | **30.8x** |
+| Gamma | 2.5ms | 54ms | **21.6x** |
+| InverseGamma | 2.8ms | 54ms | **19.7x** |
+| StudentT | 2.5ms | 37ms | **14.9x** |
+| Cauchy | 2.6ms | 36ms | **14.0x** |
+| LogNormal | 2.8ms | 51ms | **18.1x** |
 
 **Key findings:**
-- Fused dispatch is consistently **2–2.8x faster** than allocating dispatch at all data sizes
-- GPU crossover vs CPU occurs at **~1M observations** — above this, GPU fused wins
-- At **10M observations**, GPU fused is **~8x faster** than CPU for compute-heavy distributions (Beta, Gamma, LogNormal)
+- Single-pass fused is **10–14x faster than allocating** dispatch at 10M observations
+- GPU crossover vs CPU occurs at **~1M observations** — above this, GPU wins
+- At **10M observations**, GPU is **8–31x faster** than CPU depending on distribution complexity
+- Compute-heavy distributions (Beta, Gamma, InverseGamma) benefit most from GPU — lgamma hoisted to CPU eliminates redundant work
 - All 9 distributions pass numerical consistency checks (GPU paths agree within f32 tolerance)
 
-**When GPU wins**: Likelihood evaluation over large datasets (>1M observations) — common in time-series, genomics, and large-N Bayesian regression. The fused dispatch path is used automatically when persistent buffers are available in the NUTS sampler.
+**When GPU wins**: Likelihood evaluation over large datasets (>1M observations) — common in time-series, genomics, and large-N Bayesian regression. The single-pass fused path is used automatically when persistent buffers are available in the NUTS sampler.
 
 **Remaining GPU bottlenecks**:
 - NUTS sampling is inherently sequential (each step depends on the previous)
 - Below ~1M observations, CPU SIMD dominates due to zero dispatch overhead
-- Parallel chains on GPU and batch VI will further improve throughput
+- Multi-chain batched dispatch is available but requires sampler-level refactoring for full integration
 
 *Benchmark: `cargo bench -p bayesian-wasm --features sync-gpu --bench gpu_vs_cpu`*
