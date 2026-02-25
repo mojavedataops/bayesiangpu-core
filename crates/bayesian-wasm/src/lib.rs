@@ -202,6 +202,11 @@ struct DynamicModel {
     /// GPU context for accelerated likelihood computation (sync, native only)
     #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
     gpu_ctx: Option<std::sync::Arc<gpu::sync::GpuContextSync>>,
+    /// Multi-chain GPU buffers for batched dispatch across chains.
+    /// Shares observation data (x_buffer) with per-chain param/staging buffers.
+    #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+    #[allow(dead_code)]
+    multi_chain_buffers: Option<std::sync::Arc<gpu::sync::MultiChainGpuBuffers>>,
 }
 
 impl DynamicModel {
@@ -241,11 +246,11 @@ impl DynamicModel {
         let observed_f32: Vec<f32> = spec.likelihood.observed.iter().map(|&x| x as f32).collect();
 
         // Allocate persistent GPU buffers if GPU context is available
-        // 16 bytes covers most param structs (NormalBatchParams, StudentTReduceParams, etc.)
+        // 32 bytes covers all param structs including StudentTReduceParams (8 x f32)
         #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
         let gpu_buffers = gpu_ctx
             .as_ref()
-            .map(|ctx| std::sync::Arc::new(ctx.create_persistent_buffers(&observed_f32, 16)));
+            .map(|ctx| std::sync::Arc::new(ctx.create_persistent_buffers(&observed_f32, 32)));
 
         Self {
             prior_names,
@@ -261,6 +266,9 @@ impl DynamicModel {
             gpu_buffers,
             #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
             gpu_ctx,
+            // Multi-chain buffers are lazily initialized via init_multi_chain_buffers()
+            #[cfg(all(feature = "direct-gpu", feature = "sync-gpu"))]
+            multi_chain_buffers: None,
         }
     }
 
@@ -1819,6 +1827,85 @@ impl DynamicModel {
             }
             _ => (0.0, None),
         }
+    }
+
+    /// Initialize multi-chain GPU buffers for batched dispatch.
+    ///
+    /// Call this before sampling if you want all chains to share observation data
+    /// on the GPU and dispatch in a single submit+poll cycle.
+    #[allow(dead_code)]
+    pub fn init_multi_chain_buffers(&mut self, num_chains: u32) {
+        if let Some(ref ctx) = self.gpu_ctx {
+            if self.can_use_gpu() {
+                self.multi_chain_buffers = Some(std::sync::Arc::new(
+                    ctx.create_multi_chain_buffers(&self.observed_f32, 32, num_chains),
+                ));
+            }
+        }
+    }
+
+    /// Compute likelihood logp + grad for multiple chains in a single GPU dispatch.
+    ///
+    /// Each element of `chain_params_list` is the parameter vector for one chain.
+    /// Returns Vec<(log_prob, param_idx, grad)> with one entry per chain, matching
+    /// the signature of `compute_likelihood_gpu`.
+    ///
+    /// Falls back to sequential per-chain computation if multi-chain buffers are
+    /// not initialized or the distribution doesn't support batched dispatch.
+    #[allow(dead_code)]
+    pub fn compute_likelihood_multi_chain(
+        &self,
+        chain_params_list: &[&[f32]],
+        observed: &[f32],
+        spec: &DistributionSpec,
+        gpu_ctx: &gpu::sync::GpuContextSync,
+    ) -> Result<Vec<(f64, Option<usize>, f64)>, String> {
+        let num_chains = chain_params_list.len();
+        let mc_buffers = self.multi_chain_buffers.as_deref();
+
+        // Try batched dispatch for Normal distribution (most common case)
+        if let Some(buffers) = mc_buffers {
+            if buffers.num_chains as usize == num_chains && spec.dist_type.as_str() == "Normal" {
+                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let mut loc_indices = Vec::with_capacity(num_chains);
+                let params: Vec<gpu::NormalBatchParams> = chain_params_list
+                    .iter()
+                    .map(|params| {
+                        let (loc_val, loc_idx) =
+                            self.resolve_param_value(params, &spec.params, "loc");
+                        loc_indices.push(loc_idx);
+                        gpu::NormalBatchParams {
+                            mu: loc_val,
+                            sigma: scale,
+                            count: observed.len() as u32,
+                            _padding: 0,
+                        }
+                    })
+                    .collect();
+
+                let fused_results = gpu_ctx.run_normal_multi_chain_fused(buffers, &params)?;
+
+                return Ok(fused_results
+                    .into_iter()
+                    .zip(loc_indices)
+                    .map(|(r, idx)| (r.total_log_prob as f64, idx, r.total_grad as f64))
+                    .collect());
+            }
+        }
+
+        // Fallback: sequential per-chain computation using single-chain persistent buffers
+        let mut results = Vec::with_capacity(num_chains);
+        for params in chain_params_list {
+            let r = self.compute_likelihood_gpu(
+                params,
+                observed,
+                spec,
+                gpu_ctx,
+                self.gpu_buffers.as_deref(),
+            )?;
+            results.push(r);
+        }
+        Ok(results)
     }
 }
 

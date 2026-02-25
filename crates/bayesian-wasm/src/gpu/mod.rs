@@ -26,6 +26,7 @@ pub mod sync;
 
 pub use context::GpuContext;
 pub use context::PersistentGpuBuffers;
+pub use context::{ChainBuffers, MultiChainGpuBuffers};
 pub use kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
     CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams,
