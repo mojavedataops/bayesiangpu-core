@@ -10,7 +10,8 @@ struct Params {
     alpha: f32,
     beta: f32,
     count: u32,
-    _padding: u32,
+    // Pre-computed on CPU: alpha * ln(beta) - lgamma(alpha)
+    log_norm: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -21,34 +22,7 @@ struct Params {
 var<workgroup> shared_data: array<f32, 256>;
 
 const WORKGROUP_SIZE: u32 = 256u;
-
-// Lanczos approximation for lgamma (accurate for all x > 0)
-fn lgamma(x: f32) -> f32 {
-    let g: f32 = 7.0;
-    let c0: f32 = 0.99999999999980993;
-    let c1: f32 = 676.5203681218851;
-    let c2: f32 = -1259.1392167224028;
-    let c3: f32 = 771.32342877765313;
-    let c4: f32 = -176.61502916214059;
-    let c5: f32 = 12.507343278686905;
-    let c6: f32 = -0.13857109526572012;
-    let c7: f32 = 9.9843695780195716e-6;
-    let c8: f32 = 1.5056327351493116e-7;
-
-    let x1 = x - 1.0;
-    var sum = c0;
-    sum += c1 / (x1 + 1.0);
-    sum += c2 / (x1 + 2.0);
-    sum += c3 / (x1 + 3.0);
-    sum += c4 / (x1 + 4.0);
-    sum += c5 / (x1 + 5.0);
-    sum += c6 / (x1 + 6.0);
-    sum += c7 / (x1 + 7.0);
-    sum += c8 / (x1 + 8.0);
-
-    let t = x1 + g + 0.5;
-    return 0.5 * log(2.0 * 3.14159265358979323846) + (x1 + 0.5) * log(t) - t + log(sum);
-}
+const ELEMS_PER_THREAD: u32 = 4u;
 
 @compute @workgroup_size(256)
 fn main(
@@ -56,21 +30,24 @@ fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) workgroup_id: vec3<u32>
 ) {
-    let idx = global_id.x;
     let lid = local_id.x;
 
-    // Compute log_prob for this element (or 0 if out of bounds)
-    var log_prob: f32 = 0.0;
-    if (idx < params.count) {
-        let x = x_values[idx];
-        let alpha = params.alpha;
-        let beta_param = params.beta;
-        // InverseGamma log_prob: alpha*log(beta) - lgamma(alpha) - (alpha+1)*log(x) - beta/x
-        log_prob = alpha * log(beta_param) - lgamma(alpha) - (alpha + 1.0) * log(x) - beta_param / x;
+    // Each thread accumulates ELEMS_PER_THREAD elements
+    var local_sum: f32 = 0.0;
+    let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
+    for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
+        let data_idx = base + i * 256u;
+        if (data_idx < params.count) {
+            let x = x_values[data_idx];
+            let alpha = params.alpha;
+            let beta_param = params.beta;
+            // InverseGamma log_prob: log_norm - (alpha+1)*log(x) - beta/x
+            local_sum = local_sum + (params.log_norm - (alpha + 1.0) * log(x) - beta_param / x);
+        }
     }
 
     // Store in shared memory
-    shared_data[lid] = log_prob;
+    shared_data[lid] = local_sum;
     workgroupBarrier();
 
     // Parallel reduction within workgroup

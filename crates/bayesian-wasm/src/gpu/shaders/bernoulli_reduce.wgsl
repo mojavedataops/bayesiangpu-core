@@ -20,6 +20,7 @@ struct Params {
 var<workgroup> shared_data: array<f32, 256>;
 
 const WORKGROUP_SIZE: u32 = 256u;
+const ELEMS_PER_THREAD: u32 = 4u;
 
 @compute @workgroup_size(256)
 fn main(
@@ -27,21 +28,24 @@ fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) workgroup_id: vec3<u32>
 ) {
-    let idx = global_id.x;
     let lid = local_id.x;
 
-    // Compute log_prob for this element (or 0 if out of bounds)
-    var log_prob: f32 = 0.0;
-    if (idx < params.count) {
-        let x = x_values[idx];
-        let p = params.p;
-        // Bernoulli: x is 0 or 1
-        // log_prob = x * log(p) + (1 - x) * log(1 - p)
-        log_prob = x * log(p) + (1.0 - x) * log(1.0 - p);
+    // Each thread accumulates ELEMS_PER_THREAD elements
+    var local_sum: f32 = 0.0;
+    let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
+    for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
+        let data_idx = base + i * 256u;
+        if (data_idx < params.count) {
+            let x = x_values[data_idx];
+            let p = params.p;
+            // Bernoulli: x is 0 or 1
+            // log_prob = x * log(p) + (1 - x) * log(1 - p)
+            local_sum = local_sum + (x * log(p) + (1.0 - x) * log(1.0 - p));
+        }
     }
 
     // Store in shared memory
-    shared_data[lid] = log_prob;
+    shared_data[lid] = local_sum;
     workgroupBarrier();
 
     // Parallel reduction within workgroup

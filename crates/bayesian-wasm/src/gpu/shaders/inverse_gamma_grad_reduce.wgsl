@@ -10,7 +10,7 @@ struct Params {
     alpha: f32,
     beta: f32,
     count: u32,
-    _padding: u32,
+    log_norm: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -21,6 +21,7 @@ struct Params {
 var<workgroup> shared_data: array<f32, 256>;
 
 const WORKGROUP_SIZE: u32 = 256u;
+const ELEMS_PER_THREAD: u32 = 4u;
 
 @compute @workgroup_size(256)
 fn main(
@@ -28,22 +29,25 @@ fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) workgroup_id: vec3<u32>
 ) {
-    let idx = global_id.x;
     let lid = local_id.x;
 
-    // Compute grad_log_prob for this element (or 0 if out of bounds)
-    var grad: f32 = 0.0;
-    if (idx < params.count) {
-        let x = x_values[idx];
-        let alpha = params.alpha;
-        let beta_param = params.beta;
-        let x_sq = x * x;
-        // grad = -(alpha + 1) / x + beta / x^2
-        grad = -(alpha + 1.0) / x + beta_param / x_sq;
+    // Each thread accumulates ELEMS_PER_THREAD elements
+    var local_sum: f32 = 0.0;
+    let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
+    for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
+        let data_idx = base + i * 256u;
+        if (data_idx < params.count) {
+            let x = x_values[data_idx];
+            let alpha = params.alpha;
+            let beta_param = params.beta;
+            let x_sq = x * x;
+            // grad = -(alpha + 1) / x + beta / x^2
+            local_sum = local_sum + (-(alpha + 1.0) / x + beta_param / x_sq);
+        }
     }
 
     // Store in shared memory
-    shared_data[lid] = grad;
+    shared_data[lid] = local_sum;
     workgroupBarrier();
 
     // Parallel reduction within workgroup

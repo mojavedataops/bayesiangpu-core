@@ -82,31 +82,36 @@ fn log_factorial_exact(n: u32) -> f32 {
     }
 }
 
+const ELEMS_PER_THREAD: u32 = 4u;
+
 @compute @workgroup_size(256)
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) workgroup_id: vec3<u32>
 ) {
-    let idx = global_id.x;
     let lid = local_id.x;
 
-    // Compute log_prob for this element (or 0 if out of bounds)
-    var log_prob: f32 = 0.0;
-    if (idx < params.count) {
-        let k = x_values[idx];  // observed successes
-        let n = params.n;       // trials
-        let p = params.p;       // success probability
+    // Each thread accumulates ELEMS_PER_THREAD elements
+    var local_sum: f32 = 0.0;
+    let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
+    for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
+        let data_idx = base + i * 256u;
+        if (data_idx < params.count) {
+            let k = x_values[data_idx];  // observed successes
+            let n = params.n;       // trials
+            let p = params.p;       // success probability
 
-        // Binomial log probability
-        // log_prob = log(n!) - log(k!) - log((n-k)!) + k*log(p) + (n-k)*log(1-p)
-        // Use exact lookup for k (observed successes, typically small)
-        log_prob = log_factorial(n) - log_factorial_exact(u32(k)) - log_factorial(n - k)
-                 + k * log(p) + (n - k) * log(1.0 - p);
+            // Binomial log probability
+            // log_prob = log(n!) - log(k!) - log((n-k)!) + k*log(p) + (n-k)*log(1-p)
+            // Use exact lookup for k (observed successes, typically small)
+            local_sum = local_sum + (log_factorial(n) - log_factorial_exact(u32(k)) - log_factorial(n - k)
+                     + k * log(p) + (n - k) * log(1.0 - p));
+        }
     }
 
     // Store in shared memory
-    shared_data[lid] = log_prob;
+    shared_data[lid] = local_sum;
     workgroupBarrier();
 
     // Parallel reduction within workgroup

@@ -73,7 +73,8 @@ pub struct GammaReduceParams {
     pub alpha: f32,
     pub beta: f32,
     pub count: u32,
-    pub _padding: u32,
+    /// Pre-computed: alpha * ln(beta) - lgamma(alpha)
+    pub log_norm: f32,
 }
 
 /// Input parameters for Beta REDUCE kernel
@@ -83,7 +84,8 @@ pub struct BetaReduceParams {
     pub alpha: f32,
     pub beta: f32,
     pub count: u32,
-    pub _padding: u32,
+    /// Pre-computed: lgamma(alpha + beta) - lgamma(alpha) - lgamma(beta)
+    pub log_norm: f32,
 }
 
 /// Input parameters for InverseGamma REDUCE kernel
@@ -93,7 +95,8 @@ pub struct InverseGammaReduceParams {
     pub alpha: f32,
     pub beta: f32,
     pub count: u32,
-    pub _padding: u32,
+    /// Pre-computed: alpha * ln(beta) - lgamma(alpha)
+    pub log_norm: f32,
 }
 
 /// Input parameters for Uniform REDUCE kernel
@@ -164,6 +167,11 @@ pub struct StudentTReduceParams {
     pub scale: f32,
     pub nu: f32,
     pub count: u32,
+    /// Pre-computed: lgamma((nu+1)/2) - lgamma(nu/2) - 0.5*ln(nu*PI) - ln(scale)
+    pub log_norm: f32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+    pub _padding3: u32,
 }
 
 /// Input parameters for LogNormal REDUCE kernel
@@ -173,7 +181,8 @@ pub struct LogNormalReduceParams {
     pub mu: f32,
     pub sigma: f32,
     pub count: u32,
-    pub _padding: u32,
+    /// Pre-computed: -0.5 * ln(2*PI) - ln(sigma)
+    pub log_norm: f32,
 }
 
 /// Input parameters for Categorical REDUCE kernel

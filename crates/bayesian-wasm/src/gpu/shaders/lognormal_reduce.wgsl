@@ -10,7 +10,8 @@ struct Params {
     mu: f32,
     sigma: f32,
     count: u32,
-    _padding: u32,
+    // Pre-computed on CPU: -0.5 * ln(2*PI) - ln(sigma)
+    log_norm: f32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -20,8 +21,8 @@ struct Params {
 // Shared memory for workgroup reduction
 var<workgroup> shared_data: array<f32, 256>;
 
-const LOG_2PI: f32 = 1.8378770664093453;
 const WORKGROUP_SIZE: u32 = 256u;
+const ELEMS_PER_THREAD: u32 = 4u;
 
 @compute @workgroup_size(256)
 fn main(
@@ -29,25 +30,28 @@ fn main(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) workgroup_id: vec3<u32>
 ) {
-    let idx = global_id.x;
     let lid = local_id.x;
 
-    // Compute log_prob for this element (or 0 if out of bounds)
-    var log_prob: f32 = 0.0;
-    if (idx < params.count) {
-        let x = x_values[idx];
-        let mu = params.mu;
-        let sigma = params.sigma;
+    // Each thread accumulates ELEMS_PER_THREAD elements
+    var local_sum: f32 = 0.0;
+    let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
+    for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
+        let data_idx = base + i * 256u;
+        if (data_idx < params.count) {
+            let x = x_values[data_idx];
+            let mu = params.mu;
+            let sigma = params.sigma;
 
-        let log_x = log(x);
-        let z = (log_x - mu) / sigma;
+            let log_x = log(x);
+            let z = (log_x - mu) / sigma;
 
-        // log_prob = -log(x) - log(sigma) - 0.5 * log(2π) - 0.5 * z²
-        log_prob = -log_x - log(sigma) - 0.5 * LOG_2PI - 0.5 * z * z;
+            // log_prob = log_norm - log(x) - 0.5 * z^2
+            local_sum = local_sum + (params.log_norm - log_x - 0.5 * z * z);
+        }
     }
 
     // Store in shared memory
-    shared_data[lid] = log_prob;
+    shared_data[lid] = local_sum;
     workgroupBarrier();
 
     // Parallel reduction within workgroup
