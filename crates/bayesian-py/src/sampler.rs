@@ -35,11 +35,11 @@ use crate::model::{Likelihood, ModelSpec, PyModel};
 use crate::result::{PyDiagnostics, PyInferenceResult};
 
 #[cfg(feature = "gpu")]
-use bayesian_wasm::gpu_model::{self, GpuModelSpec};
-#[cfg(feature = "gpu")]
 use bayesian_wasm::gpu::sync::GpuContextSync;
 #[cfg(feature = "gpu")]
 use bayesian_wasm::gpu::PersistentGpuBuffers;
+#[cfg(feature = "gpu")]
+use bayesian_wasm::gpu_model::{self, GpuModelSpec};
 #[cfg(feature = "gpu")]
 use std::sync::Arc;
 
@@ -100,8 +100,7 @@ impl DynamicModel {
                         &likelihood.distribution.dist_type,
                         observed_f32.len(),
                     ) {
-                        let buffers =
-                            ctx_arc.create_persistent_buffers(&observed_f32, dim as u64);
+                        let buffers = ctx_arc.create_persistent_buffers(&observed_f32, dim as u64);
                         let gpu_spec = GpuModelSpec {
                             prior_names: spec.priors.iter().map(|p| p.name.clone()).collect(),
                             prior_offsets: prior_offsets.clone(),
@@ -154,9 +153,7 @@ impl DynamicModel {
 
     /// Convert ParamValue HashMap to serde_json::Value HashMap for GPU dispatch
     #[cfg(feature = "gpu")]
-    fn params_to_json(
-        params: &HashMap<String, ParamValue>,
-    ) -> HashMap<String, serde_json::Value> {
+    fn params_to_json(params: &HashMap<String, ParamValue>) -> HashMap<String, serde_json::Value> {
         params
             .iter()
             .map(|(k, v)| {
