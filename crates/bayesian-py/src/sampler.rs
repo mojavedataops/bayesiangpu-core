@@ -34,6 +34,15 @@ use crate::distributions::{ParamValue, PyDistribution};
 use crate::model::{Likelihood, ModelSpec, PyModel};
 use crate::result::{PyDiagnostics, PyInferenceResult};
 
+#[cfg(feature = "gpu")]
+use bayesian_wasm::gpu_model::{self, GpuModelSpec};
+#[cfg(feature = "gpu")]
+use bayesian_wasm::gpu::sync::GpuContextSync;
+#[cfg(feature = "gpu")]
+use bayesian_wasm::gpu::PersistentGpuBuffers;
+#[cfg(feature = "gpu")]
+use std::sync::Arc;
+
 // Type aliases for backend and device
 #[cfg(not(feature = "wgpu"))]
 type PyBackend = Autodiff<NdArray<f32>>;
@@ -60,6 +69,12 @@ struct DynamicModel {
     /// Offset of each prior in the flat parameter vector
     prior_offsets: Vec<usize>,
     device: PyDevice,
+    #[cfg(feature = "gpu")]
+    gpu_ctx: Option<Arc<GpuContextSync>>,
+    #[cfg(feature = "gpu")]
+    gpu_buffers: Option<Arc<PersistentGpuBuffers>>,
+    #[cfg(feature = "gpu")]
+    gpu_spec: Option<GpuModelSpec>,
 }
 
 impl DynamicModel {
@@ -71,13 +86,98 @@ impl DynamicModel {
             prior_offsets.push(offset);
             offset += sz;
         }
+        #[cfg(feature = "gpu")]
+        let dim: usize = prior_sizes.iter().sum();
+
+        #[cfg(feature = "gpu")]
+        let (gpu_ctx, gpu_buffers, gpu_spec) = {
+            let ctx = GpuContextSync::global();
+            if let Some(ref ctx_arc) = ctx {
+                if let Some(ref likelihood) = spec.likelihood {
+                    let observed_f32: Vec<f32> =
+                        likelihood.observed.iter().map(|&x| x as f32).collect();
+                    if gpu_model::can_use_gpu(
+                        &likelihood.distribution.dist_type,
+                        observed_f32.len(),
+                    ) {
+                        let buffers =
+                            ctx_arc.create_persistent_buffers(&observed_f32, dim as u64);
+                        let gpu_spec = GpuModelSpec {
+                            prior_names: spec.priors.iter().map(|p| p.name.clone()).collect(),
+                            prior_offsets: prior_offsets.clone(),
+                            prior_sizes: prior_sizes.clone(),
+                            priors: spec
+                                .priors
+                                .iter()
+                                .map(|p| {
+                                    (
+                                        p.distribution.dist_type.clone(),
+                                        Self::params_to_json(&p.distribution.params),
+                                    )
+                                })
+                                .collect(),
+                            likelihood_dist_type: likelihood.distribution.dist_type.clone(),
+                            likelihood_params: Self::params_to_json(
+                                &likelihood.distribution.params,
+                            ),
+                            known: likelihood.known.clone(),
+                        };
+                        (
+                            Some(ctx_arc.clone()),
+                            Some(Arc::new(buffers)),
+                            Some(gpu_spec),
+                        )
+                    } else {
+                        (ctx, None, None)
+                    }
+                } else {
+                    (ctx, None, None)
+                }
+            } else {
+                (None, None, None)
+            }
+        };
 
         DynamicModel {
             spec,
             prior_sizes,
             prior_offsets,
             device: PyDevice::default(),
+            #[cfg(feature = "gpu")]
+            gpu_ctx,
+            #[cfg(feature = "gpu")]
+            gpu_buffers,
+            #[cfg(feature = "gpu")]
+            gpu_spec,
         }
+    }
+
+    /// Convert ParamValue HashMap to serde_json::Value HashMap for GPU dispatch
+    #[cfg(feature = "gpu")]
+    fn params_to_json(
+        params: &HashMap<String, ParamValue>,
+    ) -> HashMap<String, serde_json::Value> {
+        params
+            .iter()
+            .map(|(k, v)| {
+                let json_val = match v {
+                    ParamValue::Number(n) => serde_json::Value::from(*n),
+                    ParamValue::Reference(s) => serde_json::Value::from(s.as_str()),
+                    ParamValue::LinearPredictor {
+                        __type,
+                        matrix_key,
+                        param_name,
+                        num_cols,
+                    } => serde_json::json!({
+                        "__type": __type,
+                        "matrix_key": matrix_key,
+                        "param_name": param_name,
+                        "num_cols": num_cols,
+                    }),
+                };
+                (k.clone(), json_val)
+            })
+            .collect()
     }
 
     /// Create a tensor from an f64 value
@@ -889,6 +989,25 @@ impl BayesianModel<PyBackend> for DynamicModel {
         }
         names
     }
+
+    #[cfg(feature = "gpu")]
+    fn logp_and_grad_direct(&self, params: &[f32]) -> Option<(f64, Vec<f64>)> {
+        let gpu_ctx = self.gpu_ctx.as_ref()?;
+        let buffers = self.gpu_buffers.as_ref()?;
+        let spec = self.gpu_spec.as_ref()?;
+        let observed: Vec<f32> = self
+            .spec
+            .likelihood
+            .as_ref()?
+            .observed
+            .iter()
+            .map(|&x| x as f32)
+            .collect();
+        match gpu_model::gpu_logp_and_grad(spec, params, &observed, gpu_ctx, buffers) {
+            Ok(result) => Some(result),
+            Err(_) => None, // Fall back to autodiff
+        }
+    }
 }
 
 /// Run NUTS sampling on a model
@@ -1298,9 +1417,15 @@ pub fn fit(
     }
 }
 
-/// Return the active compute backend name ("cpu" or "gpu").
+/// Return the active compute backend name ("cpu", "gpu", or "compute-gpu").
 #[pyfunction]
 pub fn backend_name() -> String {
+    #[cfg(feature = "gpu")]
+    {
+        if GpuContextSync::global().is_some() {
+            return "compute-gpu".to_string();
+        }
+    }
     #[cfg(feature = "wgpu")]
     {
         "gpu".to_string()

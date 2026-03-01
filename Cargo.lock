@@ -186,6 +186,7 @@ dependencies = [
  "bayesian-diagnostics",
  "bayesian-rng",
  "bayesian-sampler",
+ "bayesian-wasm",
  "burn",
  "burn-autodiff",
  "burn-wgpu",

@@ -29,6 +29,7 @@ classifiers = [
 keywords = ["bayesian", "mcmc", "statistics", "gpu", "inference", "nuts", "hmc"]
 
 [project.optional-dependencies]
+gpu = []
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

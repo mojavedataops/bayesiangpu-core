@@ -10,6 +10,10 @@ publish = false
 crate-type = ["staticlib"]
 name = "bayesiangpu"
 
+[features]
+default = []
+gpu = ["dep:bayesian-wasm"]
+
 [dependencies]
 extendr-api = "0.7"
 serde = { version = "1.0", features = ["derive"] }
@@ -20,6 +24,7 @@ bayesian-core = { path = "../../../../crates/bayesian-core" }
 bayesian-sampler = { path = "../../../../crates/bayesian-sampler" }
 bayesian-diagnostics = { path = "../../../../crates/bayesian-diagnostics" }
 bayesian-rng = { path = "../../../../crates/bayesian-rng" }
+bayesian-wasm = { path = "../../../../crates/bayesian-wasm", default-features = false, features = ["sync-gpu", "ndarray"], optional = true }
 
 burn = { version = "0.20", default-features = false, features = ["ndarray"] }
 burn-ndarray = "0.20"

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Detect GPU support for bayesiangpu R package
+
+# Check if wgpu/GPU is available by trying a small test
+GPU_AVAILABLE=false
+
+# Try to detect GPU via system info
+if [ "$(uname)" = "Darwin" ]; then
+    # macOS always has Metal
+    GPU_AVAILABLE=true
+elif [ -d "/dev/dri" ] || command -v nvidia-smi > /dev/null 2>&1; then
+    # Linux with DRI or NVIDIA
+    GPU_AVAILABLE=true
+fi
+
+# Write Makevars with appropriate cargo feature flags
+if [ "$GPU_AVAILABLE" = "true" ]; then
+    echo "GPU detected, enabling GPU feature"
+    sed 's|@CARGO_FEATURE_FLAGS@|--features gpu|g' src/Makevars.in > src/Makevars
+else
+    echo "No GPU detected, building CPU-only"
+    sed 's|@CARGO_FEATURE_FLAGS@||g' src/Makevars.in > src/Makevars
+fi
