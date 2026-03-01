@@ -32,11 +32,12 @@ pub use kernels::{
     BernoulliReduceParams, BetaFusedParams, BetaReduceParams, BinomialReduceParams,
     CategoricalReduceParams, CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult,
     FusedMultiGradResult, GammaFusedParams, GammaReduceParams, GpuBatchResult, GpuGradReduceResult,
-    GpuLikelihoodResult, GpuReduceResult, GpuResult, HalfNormalParams, HalfNormalReduceParams,
-    InverseGammaFusedParams, InverseGammaReduceParams, LinpredGpuResult, LogNormalReduceParams,
-    NegativeBinomialReduceParams, NormalBatchParams, NormalIndexedReduceParams,
-    NormalLinpredParams, NormalParams, PoissonReduceParams, StudentTFusedParams,
-    StudentTReduceParams, UniformReduceParams,
+    GpuLikelihoodResult, GpuReduceResult, GpuResult, HalfCauchyReduceParams, HalfNormalParams,
+    HalfNormalReduceParams, InverseGammaFusedParams, InverseGammaReduceParams, LaplaceReduceParams,
+    LinpredGpuResult, LogNormalReduceParams, LogisticReduceParams, NegativeBinomialReduceParams,
+    NormalBatchParams, NormalIndexedReduceParams, NormalLinpredParams, NormalParams,
+    PoissonReduceParams, StudentTFusedParams, StudentTReduceParams, TruncatedNormalFusedParams,
+    UniformFusedParams, UniformReduceParams, WeibullFusedParams,
 };
 
 use js_sys::{Float32Array, Promise};

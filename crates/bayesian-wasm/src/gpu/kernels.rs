@@ -320,3 +320,68 @@ pub struct LinpredGpuResult {
     pub grad_sigma: f32,
     pub grad_beta: Vec<f32>,
 }
+
+/// Input parameters for Uniform FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct UniformFusedParams {
+    pub low: f32,
+    pub high: f32,
+    pub count: u32,
+    pub _padding: u32,
+}
+
+/// Input parameters for HalfCauchy FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct HalfCauchyReduceParams {
+    pub scale: f32,
+    pub count: u32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+}
+
+/// Input parameters for Laplace FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LaplaceReduceParams {
+    pub loc: f32,
+    pub scale: f32,
+    pub count: u32,
+    pub _padding: u32,
+}
+
+/// Input parameters for Logistic FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LogisticReduceParams {
+    pub loc: f32,
+    pub scale: f32,
+    pub count: u32,
+    pub _padding: u32,
+}
+
+/// Input parameters for TruncatedNormal FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TruncatedNormalFusedParams {
+    pub loc: f32,
+    pub scale: f32,
+    pub count: u32,
+    pub _padding: u32,
+    /// Pre-computed: ln(Phi((high-loc)/scale) - Phi((low-loc)/scale))
+    pub log_norm: f32,
+    pub _p2: u32,
+    pub _p3: u32,
+    pub _p4: u32,
+}
+
+/// Input parameters for Weibull FUSED logp + grad kernel
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct WeibullFusedParams {
+    pub shape: f32,
+    pub scale: f32,
+    pub count: u32,
+    pub _padding: u32,
+}

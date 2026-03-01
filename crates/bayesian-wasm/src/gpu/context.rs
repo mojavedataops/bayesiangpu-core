@@ -105,6 +105,22 @@ pub(crate) fn student_t_fused_psi_const(nu: f32) -> f32 {
     (0.5 * (digamma((n + 1.0) / 2.0) - digamma(n / 2.0) - 1.0 / n)) as f32
 }
 
+/// Compute standard normal CDF using the error function
+pub(crate) fn normal_cdf(x: f64) -> f64 {
+    0.5 * (1.0 + libm::erf(x / std::f64::consts::SQRT_2))
+}
+
+/// Compute log normalization constant for TruncatedNormal
+pub(crate) fn truncated_normal_log_norm(loc: f32, scale: f32, low: f32, high: f32) -> f32 {
+    let l = loc as f64;
+    let s = scale as f64;
+    let lo = low as f64;
+    let hi = high as f64;
+    let cdf_high = normal_cdf((hi - l) / s);
+    let cdf_low = normal_cdf((lo - l) / s);
+    ((cdf_high - cdf_low).max(1e-10).ln()) as f32
+}
+
 /// A lazily-initialized pipeline + bind group layout pair.
 type LazyPipeline = OnceLock<(Arc<ComputePipeline>, Arc<BindGroupLayout>)>;
 
@@ -179,6 +195,13 @@ pub struct GpuContext {
     student_t_fused_reduce: LazyPipeline,
     cauchy_fused_reduce: LazyPipeline,
     lognormal_fused_reduce: LazyPipeline,
+    // New fused kernels
+    uniform_fused_reduce: LazyPipeline,
+    half_cauchy_fused_reduce: LazyPipeline,
+    laplace_fused_reduce: LazyPipeline,
+    logistic_fused_reduce: LazyPipeline,
+    truncated_normal_fused_reduce: LazyPipeline,
+    weibull_fused_reduce: LazyPipeline,
     // Linear predictor kernel
     normal_linpred_fused_reduce: LazyPipeline,
     // Indexed parameter kernel (hierarchical models)
@@ -1591,6 +1614,12 @@ impl GpuContext {
             student_t_fused_reduce: OnceLock::new(),
             cauchy_fused_reduce: OnceLock::new(),
             lognormal_fused_reduce: OnceLock::new(),
+            uniform_fused_reduce: OnceLock::new(),
+            half_cauchy_fused_reduce: OnceLock::new(),
+            laplace_fused_reduce: OnceLock::new(),
+            logistic_fused_reduce: OnceLock::new(),
+            truncated_normal_fused_reduce: OnceLock::new(),
+            weibull_fused_reduce: OnceLock::new(),
             normal_linpred_fused_reduce: OnceLock::new(),
             normal_indexed_reduce: OnceLock::new(),
         })
@@ -1997,6 +2026,63 @@ impl GpuContext {
         })
     }
 
+    // --- New fused kernels ---
+
+    fn uniform_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.uniform_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/uniform_fused_reduce.wgsl"),
+                "uniform_fused_reduce",
+            )
+        })
+    }
+    fn half_cauchy_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.half_cauchy_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/half_cauchy_fused_reduce.wgsl"),
+                "half_cauchy_fused_reduce",
+            )
+        })
+    }
+    fn laplace_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.laplace_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/laplace_fused_reduce.wgsl"),
+                "laplace_fused_reduce",
+            )
+        })
+    }
+    fn logistic_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.logistic_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/logistic_fused_reduce.wgsl"),
+                "logistic_fused_reduce",
+            )
+        })
+    }
+    fn truncated_normal_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.truncated_normal_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/truncated_normal_fused_reduce.wgsl"),
+                "truncated_normal_fused_reduce",
+            )
+        })
+    }
+    fn weibull_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.weibull_fused_reduce.get_or_init(|| {
+            init_reduce_pipeline(
+                &self.device,
+                include_str!("shaders/weibull_fused_reduce.wgsl"),
+                "weibull_fused_reduce",
+            )
+        })
+    }
+
     // --- Indexed parameter kernel (hierarchical models) ---
 
     fn normal_indexed_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
@@ -2275,6 +2361,42 @@ impl GpuContext {
     }
     pub fn lognormal_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
         Arc::clone(&self.lognormal_fused_reduce_lazy().1)
+    }
+    pub fn uniform_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.uniform_fused_reduce_lazy().0)
+    }
+    pub fn uniform_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.uniform_fused_reduce_lazy().1)
+    }
+    pub fn half_cauchy_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.half_cauchy_fused_reduce_lazy().0)
+    }
+    pub fn half_cauchy_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.half_cauchy_fused_reduce_lazy().1)
+    }
+    pub fn laplace_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.laplace_fused_reduce_lazy().0)
+    }
+    pub fn laplace_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.laplace_fused_reduce_lazy().1)
+    }
+    pub fn logistic_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.logistic_fused_reduce_lazy().0)
+    }
+    pub fn logistic_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.logistic_fused_reduce_lazy().1)
+    }
+    pub fn truncated_normal_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.truncated_normal_fused_reduce_lazy().0)
+    }
+    pub fn truncated_normal_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.truncated_normal_fused_reduce_lazy().1)
+    }
+    pub fn weibull_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.weibull_fused_reduce_lazy().0)
+    }
+    pub fn weibull_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.weibull_fused_reduce_lazy().1)
     }
 
     // =========================================================================

@@ -26,9 +26,11 @@ use super::kernels::{
     BernoulliReduceParams, BetaFusedParams, BetaReduceParams, BinomialReduceParams,
     CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, FusedMultiGradResult,
     GammaFusedParams, GammaReduceParams, GpuBatchResult, GpuGradReduceResult, GpuReduceResult,
-    GpuResult, HalfNormalReduceParams, InverseGammaFusedParams, InverseGammaReduceParams,
-    LinpredGpuResult, LogNormalReduceParams, NegativeBinomialReduceParams, NormalBatchParams,
-    PoissonReduceParams, StudentTFusedParams, StudentTReduceParams, UniformReduceParams,
+    GpuResult, HalfCauchyReduceParams, HalfNormalReduceParams, InverseGammaFusedParams,
+    InverseGammaReduceParams, LaplaceReduceParams, LinpredGpuResult, LogNormalReduceParams,
+    LogisticReduceParams, NegativeBinomialReduceParams, NormalBatchParams, PoissonReduceParams,
+    StudentTFusedParams, StudentTReduceParams, TruncatedNormalFusedParams, UniformFusedParams,
+    UniformReduceParams, WeibullFusedParams,
 };
 
 /// Block on an async future using a shared tokio runtime.
@@ -1448,6 +1450,177 @@ impl GpuContextSync {
         ))
     }
 
+    /// Run multi-grad fused Uniform logp + grad_low + grad_high.
+    pub fn run_uniform_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        low: f32,
+        high: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.uniform_fused_reduce_pipeline_clone();
+        let layout = self.inner.uniform_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            UniformFusedParams {
+                low,
+                high,
+                count: buffers.count,
+                _padding: 0,
+            },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused HalfCauchy logp + grad_scale.
+    pub fn run_half_cauchy_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        scale: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.half_cauchy_fused_reduce_pipeline_clone();
+        let layout = self
+            .inner
+            .half_cauchy_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            HalfCauchyReduceParams {
+                scale,
+                count: buffers.count,
+                _padding1: 0,
+                _padding2: 0,
+            },
+            2,
+        ))
+    }
+
+    /// Run multi-grad fused Laplace logp + grad_loc + grad_scale.
+    pub fn run_laplace_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.laplace_fused_reduce_pipeline_clone();
+        let layout = self.inner.laplace_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            LaplaceReduceParams {
+                loc,
+                scale,
+                count: buffers.count,
+                _padding: 0,
+            },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused Logistic logp + grad_loc + grad_scale.
+    pub fn run_logistic_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.logistic_fused_reduce_pipeline_clone();
+        let layout = self.inner.logistic_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            LogisticReduceParams {
+                loc,
+                scale,
+                count: buffers.count,
+                _padding: 0,
+            },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused TruncatedNormal logp + grad_loc + grad_scale.
+    pub fn run_truncated_normal_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+        low: f32,
+        high: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.truncated_normal_fused_reduce_pipeline_clone();
+        let layout = self
+            .inner
+            .truncated_normal_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            TruncatedNormalFusedParams {
+                loc,
+                scale,
+                count: buffers.count,
+                _padding: 0,
+                log_norm: context::truncated_normal_log_norm(loc, scale, low, high),
+                _p2: 0,
+                _p3: 0,
+                _p4: 0,
+            },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused Weibull logp + grad_shape + grad_scale.
+    pub fn run_weibull_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        shape: f32,
+        scale: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.weibull_fused_reduce_pipeline_clone();
+        let layout = self.inner.weibull_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            WeibullFusedParams {
+                shape,
+                scale,
+                count: buffers.count,
+                _padding: 0,
+            },
+            3,
+        ))
+    }
+
     // ==================== Single-value kernels ====================
 
     /// Run Normal distribution kernel synchronously
@@ -2789,6 +2962,280 @@ mod tests {
             None => {
                 eprintln!("Skipping indexed reduce GPU test - no GPU available");
             }
+        }
+    }
+
+    #[test]
+    fn test_uniform_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                // Uniform(2.0, 5.0): data in [2,5]
+                let n = 500;
+                let data: Vec<f32> = (0..n)
+                    .map(|i| 2.0 + 3.0 * (i as f32) / (n as f32 - 1.0))
+                    .collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let low = 2.0f32;
+                let high = 5.0f32;
+                let result = ctx
+                    .run_uniform_multi_grad_fused(&buffers, low, high)
+                    .expect("Uniform fused should succeed");
+
+                // logp = n * (-ln(high - low)) = 500 * (-ln(3))
+                let expected_logp = n as f32 * (-(high - low).ln());
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 1.0,
+                    "Uniform logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    2,
+                    "Uniform should have 2 grads (low, high)"
+                );
+
+                // grad_low = n / (high - low), grad_high = -n / (high - low)
+                let expected_grad_low = n as f32 / (high - low);
+                let expected_grad_high = -(n as f32) / (high - low);
+                let grad_low_err = (result.total_grads[0] - expected_grad_low).abs();
+                let grad_high_err = (result.total_grads[1] - expected_grad_high).abs();
+                assert!(
+                    grad_low_err < 1.0,
+                    "Uniform grad_low: expected {}, got {}",
+                    expected_grad_low,
+                    result.total_grads[0]
+                );
+                assert!(
+                    grad_high_err < 1.0,
+                    "Uniform grad_high: expected {}, got {}",
+                    expected_grad_high,
+                    result.total_grads[1]
+                );
+            }
+            None => eprintln!("Skipping test_uniform_fused - no GPU"),
+        }
+    }
+
+    #[test]
+    fn test_half_cauchy_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                // HalfCauchy(scale=2.0), data > 0
+                let n = 500;
+                let data: Vec<f32> = (1..=n).map(|i| (i as f32) * 0.01).collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let scale = 2.0f32;
+                let result = ctx
+                    .run_half_cauchy_multi_grad_fused(&buffers, scale)
+                    .expect("HalfCauchy fused should succeed");
+
+                // CPU reference: logp = sum(ln(2/pi) - ln(s) - ln(1 + (x/s)^2))
+                let expected_logp: f32 = data
+                    .iter()
+                    .map(|&x| {
+                        (2.0 / std::f32::consts::PI).ln()
+                            - scale.ln()
+                            - (1.0 + (x / scale).powi(2)).ln()
+                    })
+                    .sum();
+
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 1.0,
+                    "HalfCauchy logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    1,
+                    "HalfCauchy should have 1 grad (scale)"
+                );
+            }
+            None => eprintln!("Skipping test_half_cauchy_fused - no GPU"),
+        }
+    }
+
+    #[test]
+    fn test_laplace_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                let n = 500;
+                let data: Vec<f32> = (0..n)
+                    .map(|i| -2.5 + 5.0 * (i as f32) / (n as f32 - 1.0))
+                    .collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let loc = 0.0f32;
+                let scale = 1.5f32;
+                let result = ctx
+                    .run_laplace_multi_grad_fused(&buffers, loc, scale)
+                    .expect("Laplace fused should succeed");
+
+                // CPU reference: logp = sum(-ln(2*scale) - |x - loc| / scale)
+                let expected_logp: f32 = data
+                    .iter()
+                    .map(|&x| -(2.0 * scale).ln() - (x - loc).abs() / scale)
+                    .sum();
+
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 1.0,
+                    "Laplace logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    2,
+                    "Laplace should have 2 grads (loc, scale)"
+                );
+            }
+            None => eprintln!("Skipping test_laplace_fused - no GPU"),
+        }
+    }
+
+    #[test]
+    fn test_logistic_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                let n = 500;
+                let data: Vec<f32> = (0..n)
+                    .map(|i| -5.0 + 10.0 * (i as f32) / (n as f32 - 1.0))
+                    .collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let loc = 0.0f32;
+                let scale = 2.0f32;
+                let result = ctx
+                    .run_logistic_multi_grad_fused(&buffers, loc, scale)
+                    .expect("Logistic fused should succeed");
+
+                // CPU reference: logp = sum(-ln(scale) - z - 2*softplus(z)) where z=(x-loc)/scale
+                let expected_logp: f32 = data
+                    .iter()
+                    .map(|&x| {
+                        let z = (x - loc) / scale;
+                        let softplus = z.max(0.0) + (1.0 + (-z.abs()).exp()).ln();
+                        -scale.ln() - z - 2.0 * softplus
+                    })
+                    .sum();
+
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 1.0,
+                    "Logistic logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    2,
+                    "Logistic should have 2 grads (loc, scale)"
+                );
+            }
+            None => eprintln!("Skipping test_logistic_fused - no GPU"),
+        }
+    }
+
+    #[test]
+    fn test_truncated_normal_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                // TruncatedNormal(loc=0, scale=1, low=-2, high=2)
+                let n = 500;
+                let data: Vec<f32> = (0..n)
+                    .map(|i| -2.0 + 4.0 * (i as f32) / (n as f32 - 1.0))
+                    .collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let loc = 0.0f32;
+                let scale = 1.0f32;
+                let low = -2.0f32;
+                let high = 2.0f32;
+                let result = ctx
+                    .run_truncated_normal_multi_grad_fused(&buffers, loc, scale, low, high)
+                    .expect("TruncatedNormal fused should succeed");
+
+                // CPU reference: logp = sum(-0.5*ln(2*pi) - ln(scale) - 0.5*z^2 - log_norm)
+                // where log_norm = ln(Phi((high-loc)/scale) - Phi((low-loc)/scale))
+                let normal_cdf =
+                    |x: f32| -> f32 { 0.5 * (1.0 + libm::erff(x / std::f32::consts::SQRT_2)) };
+                let log_norm =
+                    (normal_cdf((high - loc) / scale) - normal_cdf((low - loc) / scale)).ln();
+                let expected_logp: f32 = data
+                    .iter()
+                    .map(|&x| {
+                        let z = (x - loc) / scale;
+                        -0.5 * std::f32::consts::TAU.ln() - scale.ln() - 0.5 * z * z - log_norm
+                    })
+                    .sum();
+
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 2.0,
+                    "TruncatedNormal logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    2,
+                    "TruncatedNormal should have 2 grads (loc, scale)"
+                );
+            }
+            None => eprintln!("Skipping test_truncated_normal_fused - no GPU"),
+        }
+    }
+
+    #[test]
+    fn test_weibull_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                // Weibull(shape=2.0, scale=3.0), data > 0
+                let n = 500;
+                let data: Vec<f32> = (1..=n).map(|i| (i as f32) * 0.01).collect();
+                let buffers = ctx.create_persistent_buffers(&data, 64);
+
+                let shape = 2.0f32;
+                let scale = 3.0f32;
+                let result = ctx
+                    .run_weibull_multi_grad_fused(&buffers, shape, scale)
+                    .expect("Weibull fused should succeed");
+
+                // CPU reference: logp = sum(ln(k/λ) + (k-1)*ln(x/λ) - (x/λ)^k)
+                let expected_logp: f32 = data
+                    .iter()
+                    .map(|&x| {
+                        let xr = x / scale;
+                        (shape / scale).ln() + (shape - 1.0) * xr.ln() - xr.powf(shape)
+                    })
+                    .sum();
+
+                let logp_err = (result.total_log_prob - expected_logp).abs();
+                assert!(
+                    logp_err < 1.0,
+                    "Weibull logp: expected {}, got {}, err {}",
+                    expected_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+                assert_eq!(
+                    result.total_grads.len(),
+                    2,
+                    "Weibull should have 2 grads (shape, scale)"
+                );
+            }
+            None => eprintln!("Skipping test_weibull_fused - no GPU"),
         }
     }
 }
