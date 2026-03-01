@@ -17,7 +17,8 @@ def _timeout_handler(signum, frame):
 def run_single(adapter: FrameworkAdapter, model: BenchmarkModel,
                num_samples: int = 1000, num_warmup: int = 1000,
                num_chains: int = 4, seed: int = 42,
-               timeout: int = 600) -> BenchmarkResult:
+               timeout: int = 600,
+               data_size: Optional[int] = None) -> BenchmarkResult:
     """Run a single benchmark with timeout."""
     if not adapter.supports_model(model.name):
         return BenchmarkResult(
@@ -34,7 +35,15 @@ def run_single(adapter: FrameworkAdapter, model: BenchmarkModel,
         signal.alarm(timeout)
 
     try:
-        data = model.data_generator()
+        if data_size is not None:
+            import inspect
+            sig = inspect.signature(model.data_generator)
+            if "n" in sig.parameters:
+                data = model.data_generator(n=data_size)
+            else:
+                data = model.data_generator()
+        else:
+            data = model.data_generator()
         result = adapter.run(model.name, data, num_samples, num_warmup, num_chains, seed)
         return result
     except TimeoutError:
@@ -66,6 +75,7 @@ def run_benchmarks(
     num_chains: int = 4,
     seed: int = 42,
     timeout: int = 600,
+    data_size: Optional[int] = None,
 ) -> List[BenchmarkResult]:
     """Run full benchmark suite."""
     if model_names is None:
@@ -82,7 +92,7 @@ def run_benchmarks(
                     adapter, model,
                     num_samples=num_samples, num_warmup=num_warmup,
                     num_chains=num_chains, seed=seed + r,
-                    timeout=timeout,
+                    timeout=timeout, data_size=data_size,
                 )
                 repeat_results.append(result)
 

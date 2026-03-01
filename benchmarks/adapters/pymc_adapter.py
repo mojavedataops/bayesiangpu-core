@@ -7,6 +7,9 @@ SUPPORTED_MODELS = [
     "beta_binomial", "normal_mean", "linear_regression",
     "logistic_regression", "hierarchical_intercepts", "eight_schools",
     "wide_regression", "deep_hierarchy",
+    "big_normal_mean", "huge_normal_mean",
+    "big_linear_regression",
+    "big_gamma_regression", "big_beta_regression",
 ]
 
 
@@ -122,4 +125,38 @@ class PyMCAdapter(FrameworkAdapter):
                                   sigma=tau_sub, shape=n_groups * n_sub)
             sigma = pm.HalfNormal("sigma", sigma=5)
             pm.Normal("y", mu=sub_means[data["subgroup_ids"]], sigma=sigma, observed=data["y"])
+        return model
+
+    # Big-data model builders (same structure, larger data)
+    def _build_big_normal_mean(self, pm, data):
+        return self._build_normal_mean(pm, data)
+
+    def _build_huge_normal_mean(self, pm, data):
+        return self._build_normal_mean(pm, data)
+
+    def _build_big_linear_regression(self, pm, data):
+        return self._build_linear_regression(pm, data)
+
+    def _build_big_gamma_regression(self, pm, data):
+        x = np.array(data["x"])
+        with pm.Model() as model:
+            intercept = pm.Normal("intercept", mu=0, sigma=5)
+            slope = pm.Normal("slope", mu=0, sigma=5)
+            shape = pm.HalfNormal("shape", sigma=5)
+            log_rate = intercept + slope * x
+            rate = pm.math.exp(log_rate)
+            pm.Gamma("y", alpha=shape, beta=rate, observed=data["y"])
+        return model
+
+    def _build_big_beta_regression(self, pm, data):
+        x = np.array(data["x"])
+        with pm.Model() as model:
+            intercept = pm.Normal("intercept", mu=0, sigma=5)
+            slope = pm.Normal("slope", mu=0, sigma=5)
+            concentration = pm.HalfNormal("concentration", sigma=10)
+            logit_mu = intercept + slope * x
+            mu = pm.math.sigmoid(logit_mu)
+            alpha = mu * concentration
+            beta_param = (1 - mu) * concentration
+            pm.Beta("y", alpha=alpha, beta=beta_param, observed=data["y"])
         return model

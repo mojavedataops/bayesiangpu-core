@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-def get_adapter(name: str):
+def get_adapter(name: str, backend: str = "cpu"):
     """Get framework adapter by name."""
     if name == "bayesiangpu":
         from .adapters.bayesiangpu_adapter import BayesianGPUAdapter
@@ -21,7 +21,7 @@ def get_adapter(name: str):
         return PyMCAdapter()
     elif name == "numpyro":
         from .adapters.numpyro_adapter import NumPyroAdapter
-        return NumPyroAdapter()
+        return NumPyroAdapter(backend=backend)
     elif name == "cmdstan":
         from .adapters.cmdstan_adapter import CmdStanAdapter
         return CmdStanAdapter()
@@ -48,11 +48,15 @@ def main():
     parser.add_argument("--timeout", type=int, default=600, help="Timeout per run (seconds)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--output", type=str, default=None, help="Output JSON path")
+    parser.add_argument("--data-size", type=int, default=None,
+                        help="Override observation count for data generators")
+    parser.add_argument("--backend", choices=["cpu", "gpu", "auto"], default="cpu",
+                        help="Compute backend for supported frameworks (cpu/gpu/auto)")
     parser.add_argument("--list-models", action="store_true", help="List available models")
     args = parser.parse_args()
 
     # Import models to populate registry
-    from .models import simple, medium, large  # noqa: F401
+    from .models import simple, medium, large, gpu_scale  # noqa: F401
     from .models.registry import MODEL_REGISTRY
 
     if args.list_models:
@@ -65,7 +69,7 @@ def main():
     adapters = []
     for name in fw_names:
         try:
-            adapters.append(get_adapter(name))
+            adapters.append(get_adapter(name, backend=args.backend))
         except ImportError as e:
             print(f"Warning: {name} not available ({e})")
 
@@ -87,13 +91,22 @@ def main():
         num_chains=args.chains,
         seed=args.seed,
         timeout=args.timeout,
+        data_size=args.data_size,
     )
 
     from .runners.reporter import to_markdown_table, to_json
     print("\n" + to_markdown_table(results))
 
     if args.output:
-        to_json(results, args.output)
+        metadata = {
+            "backend": args.backend,
+            "data_size_override": args.data_size,
+            "num_samples": args.samples,
+            "num_warmup": args.warmup,
+            "num_chains": args.chains,
+            "seed": args.seed,
+        }
+        to_json(results, args.output, metadata=metadata)
         print(f"\nResults saved to {args.output}")
 
 

@@ -7,13 +7,24 @@ SUPPORTED_MODELS = [
     "beta_binomial", "normal_mean", "linear_regression",
     "logistic_regression", "hierarchical_intercepts", "eight_schools",
     "wide_regression", "deep_hierarchy",
+    "big_normal_mean", "huge_normal_mean",
+    "big_linear_regression",
+    "big_gamma_regression", "big_beta_regression",
 ]
 
 
 class NumPyroAdapter(FrameworkAdapter):
+    def __init__(self, backend: str = "cpu"):
+        self._backend = backend
+        if backend == "gpu":
+            import jax
+            jax.config.update("jax_platform_name", "gpu")
+        elif backend == "auto":
+            pass  # Let JAX auto-detect
+
     @property
     def name(self) -> str:
-        return "NumPyro"
+        return f"NumPyro ({self._backend})"
 
     def supports_model(self, model_name: str) -> bool:
         return model_name in SUPPORTED_MODELS
@@ -143,4 +154,40 @@ class NumPyroAdapter(FrameworkAdapter):
                 jnp.repeat(group_means, n_sub), tau_sub))
             sigma = numpyro.sample("sigma", dist.HalfNormal(5))
             numpyro.sample("y", dist.Normal(sub_means[subgroup_ids], sigma), obs=y)
+        return model
+
+    # Big-data model builders (same structure, larger data)
+    def _build_big_normal_mean(self, numpyro, dist, jnp, data):
+        return self._build_normal_mean(numpyro, dist, jnp, data)
+
+    def _build_huge_normal_mean(self, numpyro, dist, jnp, data):
+        return self._build_normal_mean(numpyro, dist, jnp, data)
+
+    def _build_big_linear_regression(self, numpyro, dist, jnp, data):
+        return self._build_linear_regression(numpyro, dist, jnp, data)
+
+    def _build_big_gamma_regression(self, numpyro, dist, jnp, data):
+        x = jnp.array(data["x"])
+        y = jnp.array(data["y"])
+        def model():
+            intercept = numpyro.sample("intercept", dist.Normal(0, 5))
+            slope = numpyro.sample("slope", dist.Normal(0, 5))
+            shape = numpyro.sample("shape", dist.HalfNormal(5))
+            log_rate = intercept + slope * x
+            rate = jnp.exp(log_rate)
+            numpyro.sample("y", dist.Gamma(shape, rate), obs=y)
+        return model
+
+    def _build_big_beta_regression(self, numpyro, dist, jnp, data):
+        x = jnp.array(data["x"])
+        y = jnp.array(data["y"])
+        def model():
+            intercept = numpyro.sample("intercept", dist.Normal(0, 5))
+            slope = numpyro.sample("slope", dist.Normal(0, 5))
+            concentration = numpyro.sample("concentration", dist.HalfNormal(10))
+            logit_mu = intercept + slope * x
+            mu = jnp.exp(logit_mu) / (1 + jnp.exp(logit_mu))
+            alpha = mu * concentration
+            beta = (1 - mu) * concentration
+            numpyro.sample("y", dist.Beta(alpha, beta), obs=y)
         return model

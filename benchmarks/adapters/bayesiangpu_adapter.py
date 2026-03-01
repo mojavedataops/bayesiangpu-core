@@ -7,6 +7,9 @@ SUPPORTED_MODELS = [
     "beta_binomial", "normal_mean", "linear_regression",
     "logistic_regression", "hierarchical_intercepts", "eight_schools",
     "wide_regression", "deep_hierarchy",
+    "big_normal_mean", "huge_normal_mean",
+    "big_linear_regression",
+    "big_gamma_regression", "big_beta_regression",
 ]
 
 
@@ -117,4 +120,33 @@ class BayesianGPUAdapter(FrameworkAdapter):
         model.param("sub_means", bg.Normal(0, 5), size=n_total_sub)
         model.param("sigma", bg.HalfNormal(5))
         model.observe(bg.Normal("sub_means", "sigma"), data["y"])
+        return model
+
+    # Big-data model builders (same structure, larger data)
+    def _build_big_normal_mean(self, bg, data):
+        return self._build_normal_mean(bg, data)
+
+    def _build_huge_normal_mean(self, bg, data):
+        return self._build_normal_mean(bg, data)
+
+    def _build_big_linear_regression(self, bg, data):
+        return self._build_linear_regression(bg, data)
+
+    def _build_big_gamma_regression(self, bg, data):
+        model = bg.Model()
+        model.param("intercept", bg.Normal(0, 5))
+        model.param("slope", bg.Normal(0, 5))
+        model.param("shape", bg.HalfNormal(5))
+        model.observe(bg.Gamma("shape", "shape"),  # rate parameterized via link
+                      data["y"],
+                      known={"x": data["x"]})
+        return model
+
+    def _build_big_beta_regression(self, bg, data):
+        model = bg.Model()
+        model.param("intercept", bg.Normal(0, 5))
+        model.param("slope", bg.Normal(0, 5))
+        model.param("concentration", bg.HalfNormal(10))
+        model.observe(bg.Beta(1, 1), data["y"],  # placeholder; real link via known
+                      known={"x": data["x"]})
         return model

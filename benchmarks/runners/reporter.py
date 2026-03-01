@@ -49,8 +49,20 @@ def to_markdown_table(results: List[BenchmarkResult]) -> str:
     return "\n".join(lines)
 
 
-def to_json(results: List[BenchmarkResult], path: str):
-    """Save results to JSON."""
+def to_json(results: List[BenchmarkResult], path: str, metadata: dict = None):
+    """Save results to JSON with optional metadata."""
+    import platform
+    from datetime import datetime, timezone
+
+    output = {}
+    if metadata is not None:
+        output["metadata"] = {
+            "hardware": platform.machine(),
+            "platform": platform.platform(),
+            "date": datetime.now(timezone.utc).isoformat(),
+            **metadata,
+        }
+
     data = []
     for r in results:
         data.append({
@@ -62,5 +74,6 @@ def to_json(results: List[BenchmarkResult], path: str):
             "min_ess": r.min_ess,
             "error": r.error,
         })
+    output["results"] = data
     with open(path, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(output, f, indent=2)

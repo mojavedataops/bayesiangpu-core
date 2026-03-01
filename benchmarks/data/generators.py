@@ -83,6 +83,38 @@ def wide_regression_data(n=500, p=1000, seed=42):
     return {"X": X, "y": y.tolist(), "beta_true": beta_true, "sigma_true": sigma_true, "n": n, "p": p}
 
 
+def gamma_regression_data(n=1000, seed=42):
+    """Gamma regression: 3 parameters (intercept, slope, shape)."""
+    rng = np.random.default_rng(seed)
+    intercept_true = 1.0
+    slope_true = 0.5
+    shape_true = 2.0
+    x = rng.standard_normal(n)
+    log_rate = intercept_true + slope_true * x
+    rate = np.exp(log_rate)
+    y = rng.gamma(shape_true, 1.0 / rate)
+    return {"x": x, "y": y.tolist(), "n": n,
+            "intercept_true": intercept_true, "slope_true": slope_true,
+            "shape_true": shape_true}
+
+
+def beta_regression_data(n=1000, seed=42):
+    """Beta regression: 3 parameters (intercept, slope, concentration)."""
+    rng = np.random.default_rng(seed)
+    intercept_true = 0.0
+    slope_true = 0.5
+    concentration_true = 10.0
+    x = rng.standard_normal(n)
+    logit_mu = intercept_true + slope_true * x
+    mu = 1.0 / (1.0 + np.exp(-logit_mu))
+    alpha = mu * concentration_true
+    beta_param = (1.0 - mu) * concentration_true
+    y = rng.beta(alpha, beta_param)
+    return {"x": x, "y": y.tolist(), "n": n,
+            "intercept_true": intercept_true, "slope_true": slope_true,
+            "concentration_true": concentration_true}
+
+
 def deep_hierarchy_data(n_groups=50, n_subgroups=10, n_per=10, seed=42):
     """Deep (3-level) hierarchy: ~n_groups*n_subgroups + n_groups + 4 parameters."""
     rng = np.random.default_rng(seed)
