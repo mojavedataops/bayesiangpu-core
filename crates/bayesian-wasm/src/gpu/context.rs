@@ -10,10 +10,11 @@ use wgpu::{util::DeviceExt, BindGroupLayout, BufferUsages, ComputePipeline, Devi
 
 use super::kernels::{
     BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
-    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams,
-    GpuBatchResult, GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams,
-    HalfNormalReduceParams, InverseGammaReduceParams, LogNormalReduceParams,
-    NegativeBinomialReduceParams, NormalBatchParams, NormalParams, PoissonReduceParams,
+    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, FusedMultiGradResult,
+    GammaReduceParams, GpuBatchResult, GpuGradReduceResult, GpuReduceResult, GpuResult,
+    HalfNormalParams, HalfNormalReduceParams, InverseGammaReduceParams, LinpredGpuResult,
+    LogNormalReduceParams, NegativeBinomialReduceParams, NormalBatchParams,
+    NormalIndexedReduceParams, NormalLinpredParams, NormalParams, PoissonReduceParams,
     StudentTReduceParams, UniformReduceParams,
 };
 
@@ -55,6 +56,55 @@ pub(crate) fn lognormal_log_norm(sigma: f32) -> f32 {
     (-0.5 * (2.0 * std::f64::consts::PI).ln() - s.ln()) as f32
 }
 
+/// Compute the digamma (psi) function using the asymptotic series.
+pub(crate) fn digamma(x: f64) -> f64 {
+    // Shift x up until x >= 8 for good asymptotic convergence
+    let mut result = 0.0;
+    let mut x = x;
+    while x < 8.0 {
+        result -= 1.0 / x;
+        x += 1.0;
+    }
+    // Asymptotic expansion for large x
+    let inv_x = 1.0 / x;
+    let inv_x2 = inv_x * inv_x;
+    result += x.ln()
+        - 0.5 * inv_x
+        - inv_x2 * (1.0 / 12.0 - inv_x2 * (1.0 / 120.0 - inv_x2 * (1.0 / 252.0 - inv_x2 / 240.0)));
+    result
+}
+
+/// Pre-compute digamma constants for Beta fused kernel
+pub(crate) fn beta_fused_psi_consts(alpha: f32, beta: f32) -> (f32, f32) {
+    let a = alpha as f64;
+    let b = beta as f64;
+    let psi_sum = digamma(a + b);
+    (
+        (psi_sum - digamma(a)) as f32, // psi(alpha+beta) - psi(alpha)
+        (psi_sum - digamma(b)) as f32, // psi(alpha+beta) - psi(beta)
+    )
+}
+
+/// Pre-compute digamma constants for Gamma fused kernel
+pub(crate) fn gamma_fused_psi_const(alpha: f32, beta: f32) -> f32 {
+    let a = alpha as f64;
+    let b = beta as f64;
+    (-digamma(a) + b.ln()) as f32
+}
+
+/// Pre-compute digamma constants for InverseGamma fused kernel
+pub(crate) fn inverse_gamma_fused_psi_const(alpha: f32, beta: f32) -> f32 {
+    let a = alpha as f64;
+    let b = beta as f64;
+    (b.ln() - digamma(a)) as f32
+}
+
+/// Pre-compute digamma constants for StudentT fused kernel
+pub(crate) fn student_t_fused_psi_const(nu: f32) -> f32 {
+    let n = nu as f64;
+    (0.5 * (digamma((n + 1.0) / 2.0) - digamma(n / 2.0) - 1.0 / n)) as f32
+}
+
 /// A lazily-initialized pipeline + bind group layout pair.
 type LazyPipeline = OnceLock<(Arc<ComputePipeline>, Arc<BindGroupLayout>)>;
 
@@ -75,6 +125,9 @@ const ELEMS_PER_WORKGROUP: u32 = 256 * ELEMS_PER_THREAD;
 
 /// Threshold: if workgroup_count exceeds this, use a second GPU pass instead of CPU sum.
 const SECOND_PASS_THRESHOLD: u32 = 1024;
+
+/// Maximum number of fused outputs per workgroup (logp + up to 3 gradients for StudentT).
+const MAX_FUSED_OUTPUTS: u32 = 4;
 
 /// GPU compute context holding wgpu resources
 ///
@@ -126,6 +179,10 @@ pub struct GpuContext {
     student_t_fused_reduce: LazyPipeline,
     cauchy_fused_reduce: LazyPipeline,
     lognormal_fused_reduce: LazyPipeline,
+    // Linear predictor kernel
+    normal_linpred_fused_reduce: LazyPipeline,
+    // Indexed parameter kernel (hierarchical models)
+    normal_indexed_reduce: LazyPipeline,
 }
 
 // ============================================================================
@@ -340,6 +397,65 @@ fn create_categorical_reduce_layout(device: &Device, label: &str) -> BindGroupLa
     })
 }
 
+/// Create the 5-binding indexed reduce layout (params, y_values, theta, group_idx, output)
+fn create_indexed_reduce_layout(device: &Device, label: &str) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(label),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
 /// Helper: lazily create a standard 3-binding reduce pipeline
 fn init_reduce_pipeline(
     device: &Device,
@@ -370,6 +486,103 @@ fn init_basic_pipeline(
         &layout,
     );
     (Arc::new(pipeline), Arc::new(layout))
+}
+
+/// Helper: lazily create a 5-binding linpred pipeline (same layout as indexed: params, y, X, beta, output)
+fn init_linpred_pipeline(
+    device: &Device,
+    shader_source: &str,
+    label: &str,
+) -> (Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+    let layout = create_indexed_reduce_layout(device, &format!("{}_bind_group_layout", label));
+    let pipeline = create_pipeline(
+        device,
+        shader_source,
+        &format!("{}_pipeline", label),
+        &layout,
+    );
+    (Arc::new(pipeline), Arc::new(layout))
+}
+
+/// Pre-allocated GPU buffers for linear predictor kernel execution.
+///
+/// y is uploaded once. X matrix is uploaded once. Beta is updated via write_buffer per step.
+/// Output buffer is sized for (P+2) * workgroup_count f32 values.
+pub struct LinpredGpuBuffers {
+    pub y_buffer: wgpu::Buffer,
+    pub x_buffer: wgpu::Buffer,
+    pub beta_buffer: wgpu::Buffer,
+    pub params_buffer: wgpu::Buffer,
+    pub output_buffer: wgpu::Buffer,
+    pub staging_buffer: wgpu::Buffer,
+    pub workgroup_count: u32,
+    pub count: u32,
+    pub p: u32,
+}
+
+/// Create linpred GPU buffers for y ~ Normal(X @ beta, sigma).
+pub fn create_linpred_buffers(
+    device: &Device,
+    y_values: &[f32],
+    x_matrix: &[f32],
+    p: u32,
+) -> LinpredGpuBuffers {
+    let count = y_values.len() as u32;
+    let workgroup_count = count.div_ceil(ELEMS_PER_WORKGROUP);
+    let output_count = workgroup_count as u64 * (p as u64 + 2);
+    let output_size = output_count * 4;
+
+    let y_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("linpred_y"),
+        contents: bytemuck::cast_slice(y_values),
+        usage: BufferUsages::STORAGE,
+    });
+
+    let x_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("linpred_x"),
+        contents: bytemuck::cast_slice(x_matrix),
+        usage: BufferUsages::STORAGE,
+    });
+
+    let beta_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("linpred_beta"),
+        size: (p as u64) * 4,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("linpred_params"),
+        size: std::mem::size_of::<NormalLinpredParams>() as u64,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("linpred_output"),
+        size: output_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("linpred_staging"),
+        size: output_size,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    LinpredGpuBuffers {
+        y_buffer,
+        x_buffer,
+        beta_buffer,
+        params_buffer,
+        output_buffer,
+        staging_buffer,
+        workgroup_count,
+        count,
+        p,
+    }
 }
 
 // =============================================================================
@@ -485,8 +698,9 @@ pub fn create_persistent_buffers(
         mapped_at_creation: false,
     });
 
-    // Fused single-pass output: interleaved [logp0, grad0, logp1, grad1, ...]
-    let fused_output_size = (workgroup_count as u64) * 2 * 4;
+    // Fused single-pass output: supports up to MAX_FUSED_OUTPUTS values per workgroup.
+    // StudentT needs 4 (logp + 3 grads), others need 2 or 3.
+    let fused_output_size = (workgroup_count as u64) * MAX_FUSED_OUTPUTS as u64 * 4;
     let fused_output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("persistent_fused_output"),
         size: fused_output_size,
@@ -1114,6 +1328,7 @@ pub async fn run_fused_logp_and_grad_persistent<P: bytemuck::Pod>(
 ///
 /// The fused shader writes interleaved output: [logp0, grad0, logp1, grad1, ...] where
 /// each pair corresponds to one workgroup's partial sums.
+#[allow(dead_code)]
 pub async fn run_single_pass_fused_persistent<P: bytemuck::Pod>(
     device: &Arc<Device>,
     queue: &Arc<Queue>,
@@ -1196,6 +1411,96 @@ pub async fn run_single_pass_fused_persistent<P: bytemuck::Pod>(
     Ok(FusedLogpGradResult {
         total_log_prob: total_logp as f32,
         total_grad: total_grad as f32,
+    })
+}
+
+/// Run a single-pass fused shader that outputs N values per workgroup (logp + N-1 grads).
+///
+/// `num_outputs` specifies how many f32 values each workgroup writes:
+/// - 2 for single-param distributions (Exponential, HalfNormal)
+/// - 3 for two-param distributions (Normal, Beta, Gamma, InverseGamma, Cauchy, LogNormal)
+/// - 4 for three-param distributions (StudentT)
+pub async fn run_single_pass_fused_persistent_multi<P: bytemuck::Pod>(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    fused_pipeline: &Arc<ComputePipeline>,
+    fused_layout: &Arc<BindGroupLayout>,
+    buffers: &PersistentGpuBuffers,
+    params: P,
+    num_outputs: u32,
+) -> Result<FusedMultiGradResult, String> {
+    if buffers.count == 0 {
+        return Ok(FusedMultiGradResult {
+            total_log_prob: 0.0,
+            total_grads: vec![0.0; (num_outputs - 1) as usize],
+        });
+    }
+
+    queue.write_buffer(&buffers.params_buffer, 0, bytemuck::bytes_of(&params));
+
+    let fused_bg_key = Arc::as_ptr(fused_pipeline) as usize;
+
+    let encoder = {
+        let fused_cache = buffers.cached_fused_bind_group(device, fused_pipeline, fused_layout);
+        let fused_bind_group = fused_cache.get(&fused_bg_key).unwrap();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("multi_grad_fused_enc"),
+        });
+
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("multi_grad_fused"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(fused_pipeline.as_ref());
+            pass.set_bind_group(0, fused_bind_group, &[]);
+            pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+        }
+
+        let fused_output_size = (buffers.workgroup_count as u64) * (num_outputs as u64) * 4;
+        encoder.copy_buffer_to_buffer(
+            &buffers.fused_output_buffer,
+            0,
+            &buffers.fused_staging_buffer,
+            0,
+            fused_output_size,
+        );
+        encoder
+    };
+
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let fused_output_size = (buffers.workgroup_count as u64) * (num_outputs as u64) * 4;
+    let fused_slice = buffers.fused_staging_buffer.slice(..fused_output_size);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    fused_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    poll_device(device);
+    receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Fused buffer mapping failed: {:?}", e))?;
+
+    let data = fused_slice.get_mapped_range();
+    let interleaved: &[f32] = bytemuck::cast_slice(&data);
+
+    let n = num_outputs as usize;
+    let mut total_logp: f64 = 0.0;
+    let mut total_grads: Vec<f64> = vec![0.0; n - 1];
+    for chunk in interleaved.chunks(n) {
+        total_logp += chunk[0] as f64;
+        for (i, grad) in total_grads.iter_mut().enumerate() {
+            *grad += chunk[1 + i] as f64;
+        }
+    }
+    drop(data);
+    buffers.fused_staging_buffer.unmap();
+
+    Ok(FusedMultiGradResult {
+        total_log_prob: total_logp as f32,
+        total_grads: total_grads.iter().map(|&g| g as f32).collect(),
     })
 }
 
@@ -1286,6 +1591,8 @@ impl GpuContext {
             student_t_fused_reduce: OnceLock::new(),
             cauchy_fused_reduce: OnceLock::new(),
             lognormal_fused_reduce: OnceLock::new(),
+            normal_linpred_fused_reduce: OnceLock::new(),
+            normal_indexed_reduce: OnceLock::new(),
         })
     }
 
@@ -1690,6 +1997,36 @@ impl GpuContext {
         })
     }
 
+    // --- Indexed parameter kernel (hierarchical models) ---
+
+    fn normal_indexed_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal_indexed_reduce.get_or_init(|| {
+            let layout = create_indexed_reduce_layout(
+                &self.device,
+                "normal_indexed_reduce_bind_group_layout",
+            );
+            let pipeline = create_pipeline(
+                &self.device,
+                include_str!("shaders/normal_indexed_reduce.wgsl"),
+                "normal_indexed_reduce_pipeline",
+                &layout,
+            );
+            (Arc::new(pipeline), Arc::new(layout))
+        })
+    }
+
+    // --- Linear predictor kernel ---
+
+    fn normal_linpred_fused_reduce_lazy(&self) -> &(Arc<ComputePipeline>, Arc<BindGroupLayout>) {
+        self.normal_linpred_fused_reduce.get_or_init(|| {
+            init_linpred_pipeline(
+                &self.device,
+                include_str!("shaders/normal_linpred_fused_reduce.wgsl"),
+                "normal_linpred_fused_reduce",
+            )
+        })
+    }
+
     // =========================================================================
     // CLONE METHODS - Basic
     // =========================================================================
@@ -1938,6 +2275,28 @@ impl GpuContext {
     }
     pub fn lognormal_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
         Arc::clone(&self.lognormal_fused_reduce_lazy().1)
+    }
+
+    // =========================================================================
+    // CLONE METHODS - Indexed parameter kernel
+    // =========================================================================
+
+    pub fn normal_indexed_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.normal_indexed_reduce_lazy().0)
+    }
+    pub fn normal_indexed_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.normal_indexed_reduce_lazy().1)
+    }
+
+    // =========================================================================
+    // CLONE METHODS - Linear predictor kernel
+    // =========================================================================
+
+    pub fn normal_linpred_fused_reduce_pipeline_clone(&self) -> Arc<ComputePipeline> {
+        Arc::clone(&self.normal_linpred_fused_reduce_lazy().0)
+    }
+    pub fn normal_linpred_fused_reduce_bind_group_layout_clone(&self) -> Arc<BindGroupLayout> {
+        Arc::clone(&self.normal_linpred_fused_reduce_lazy().1)
     }
 }
 
@@ -3183,6 +3542,181 @@ pub async fn run_lognormal_grad_reduce_kernel(
 }
 
 // =============================================================================
+// INDEXED PARAMETER KERNEL (HIERARCHICAL MODELS)
+// =============================================================================
+
+/// Result from the indexed Normal reduce kernel.
+pub struct IndexedNormalResult {
+    pub total_log_prob: f64,
+    pub grad_sigma: f64,
+    pub grad_theta: Vec<f64>,
+}
+
+/// Run the indexed Normal reduce kernel for y[i] ~ Normal(theta[group[i]], sigma).
+///
+/// Dispatches the indexed shader for total logp and grad_sigma,
+/// then computes per-group theta gradients on CPU from pre-sorted observations.
+#[allow(clippy::too_many_arguments, dead_code)]
+pub async fn run_normal_indexed_reduce(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    pipeline: &Arc<ComputePipeline>,
+    layout: &Arc<BindGroupLayout>,
+    y_sorted: &[f32],
+    theta: &[f32],
+    group_idx: &[u32],
+    group_boundaries: &[usize],
+    sigma: f32,
+) -> Result<IndexedNormalResult, String> {
+    let count = y_sorted.len() as u32;
+
+    if count == 0 {
+        return Ok(IndexedNormalResult {
+            total_log_prob: 0.0,
+            grad_sigma: 0.0,
+            grad_theta: vec![0.0; theta.len()],
+        });
+    }
+
+    let workgroup_count = count.div_ceil(ELEMS_PER_WORKGROUP);
+    let num_outputs: u32 = 2; // logp + grad_sigma
+
+    let params = NormalIndexedReduceParams {
+        sigma,
+        count,
+        num_groups: theta.len() as u32,
+        _padding: 0,
+    };
+
+    let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("indexed_params"),
+        contents: bytemuck::bytes_of(&params),
+        usage: BufferUsages::UNIFORM,
+    });
+
+    let y_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("indexed_y"),
+        contents: bytemuck::cast_slice(y_sorted),
+        usage: BufferUsages::STORAGE,
+    });
+
+    let theta_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("indexed_theta"),
+        contents: bytemuck::cast_slice(theta),
+        usage: BufferUsages::STORAGE,
+    });
+
+    let group_idx_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("indexed_group_idx"),
+        contents: bytemuck::cast_slice(group_idx),
+        usage: BufferUsages::STORAGE,
+    });
+
+    let output_size = (workgroup_count as u64) * (num_outputs as u64) * 4;
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("indexed_output"),
+        size: output_size,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("indexed_staging"),
+        size: output_size,
+        usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("indexed_bg"),
+        layout: layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: y_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: theta_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: group_idx_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: output_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("indexed_enc"),
+    });
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("indexed_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline.as_ref());
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(workgroup_count, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_size);
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let buffer_slice = staging_buffer.slice(..output_size);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    poll_device(device);
+    receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Indexed buffer mapping failed: {:?}", e))?;
+
+    let data = buffer_slice.get_mapped_range();
+    let interleaved: &[f32] = bytemuck::cast_slice(&data);
+
+    let n = num_outputs as usize;
+    let mut total_logp: f64 = 0.0;
+    let mut total_grad_sigma: f64 = 0.0;
+    for chunk in interleaved.chunks(n) {
+        total_logp += chunk[0] as f64;
+        total_grad_sigma += chunk[1] as f64;
+    }
+    drop(data);
+    staging_buffer.unmap();
+
+    // Compute per-group theta gradients on CPU from pre-sorted data.
+    // For group k: grad_theta[k] = sum_{i in group k} (y[i] - theta[k]) / sigma^2
+    let sigma2 = (sigma as f64) * (sigma as f64);
+    let num_groups_usize = theta.len();
+    let mut grad_theta = vec![0.0f64; num_groups_usize];
+    for k in 0..num_groups_usize {
+        let start = group_boundaries[k];
+        let end = group_boundaries[k + 1];
+        let mu_k = theta[k] as f64;
+        let mut sum = 0.0f64;
+        for &y in &y_sorted[start..end] {
+            sum += (y as f64) - mu_k;
+        }
+        grad_theta[k] = sum / sigma2;
+    }
+
+    Ok(IndexedNormalResult {
+        total_log_prob: total_logp,
+        grad_sigma: total_grad_sigma,
+        grad_theta,
+    })
+}
+
+// =============================================================================
 // MULTI-CHAIN GPU BUFFERS
 // =============================================================================
 
@@ -3465,4 +3999,135 @@ pub async fn run_multi_chain_fused<P: bytemuck::Pod>(
     }
 
     Ok(results)
+}
+
+// =============================================================================
+// LINEAR PREDICTOR KERNEL RUNNER
+// =============================================================================
+
+/// Run the Normal linear predictor fused kernel: y ~ Normal(X @ beta, sigma).
+///
+/// Uploads beta and params, dispatches the linpred shader, reads back (P+2) values
+/// per workgroup and reduces on CPU.
+pub async fn run_linpred_fused(
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
+    pipeline: &Arc<ComputePipeline>,
+    layout: &Arc<BindGroupLayout>,
+    buffers: &LinpredGpuBuffers,
+    beta_values: &[f32],
+    sigma: f32,
+) -> Result<LinpredGpuResult, String> {
+    let p = buffers.p;
+    let count = buffers.count;
+
+    if count == 0 {
+        return Ok(LinpredGpuResult {
+            total_log_prob: 0.0,
+            grad_sigma: 0.0,
+            grad_beta: vec![0.0; p as usize],
+        });
+    }
+
+    // Upload beta values
+    queue.write_buffer(&buffers.beta_buffer, 0, bytemuck::cast_slice(beta_values));
+
+    // Upload params
+    let params = NormalLinpredParams {
+        sigma,
+        count,
+        p,
+        _padding: 0,
+    };
+    queue.write_buffer(&buffers.params_buffer, 0, bytemuck::bytes_of(&params));
+
+    // Create bind group
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("linpred_bind_group"),
+        layout: layout.as_ref(),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffers.params_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: buffers.y_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffers.x_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: buffers.beta_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: buffers.output_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("linpred_enc"),
+    });
+
+    {
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("linpred_pass"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(pipeline.as_ref());
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.dispatch_workgroups(buffers.workgroup_count, 1, 1);
+    }
+
+    let output_size = (buffers.workgroup_count as u64) * (p as u64 + 2) * 4;
+    encoder.copy_buffer_to_buffer(
+        &buffers.output_buffer,
+        0,
+        &buffers.staging_buffer,
+        0,
+        output_size,
+    );
+
+    queue.submit(std::iter::once(encoder.finish()));
+
+    let staging_slice = buffers.staging_buffer.slice(..output_size);
+    let (sender, receiver) = futures_channel::oneshot::channel();
+    staging_slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = sender.send(r);
+    });
+    poll_device(device);
+    receiver
+        .await
+        .map_err(|_| "Channel cancelled")?
+        .map_err(|e| format!("Linpred buffer mapping failed: {:?}", e))?;
+
+    let data = staging_slice.get_mapped_range();
+    let raw: &[f32] = bytemuck::cast_slice(&data);
+
+    // Each workgroup outputs (P+2) values: [logp, grad_sigma, grad_beta[0..P]]
+    let stride = (p + 2) as usize;
+    let mut total_logp: f64 = 0.0;
+    let mut total_grad_sigma: f64 = 0.0;
+    let mut total_grad_beta: Vec<f64> = vec![0.0; p as usize];
+
+    for chunk in raw.chunks(stride) {
+        total_logp += chunk[0] as f64;
+        total_grad_sigma += chunk[1] as f64;
+        for j in 0..p as usize {
+            total_grad_beta[j] += chunk[2 + j] as f64;
+        }
+    }
+
+    drop(data);
+    buffers.staging_buffer.unmap();
+
+    Ok(LinpredGpuResult {
+        total_log_prob: total_logp as f32,
+        grad_sigma: total_grad_sigma as f32,
+        grad_beta: total_grad_beta.iter().map(|&g| g as f32).collect(),
+    })
 }

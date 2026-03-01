@@ -77,6 +77,21 @@ pub struct GammaReduceParams {
     pub log_norm: f32,
 }
 
+/// Input parameters for Gamma FUSED multi-grad kernel (with pre-computed digamma)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GammaFusedParams {
+    pub alpha: f32,
+    pub beta: f32,
+    pub count: u32,
+    pub log_norm: f32,
+    /// Pre-computed: -psi(alpha) + ln(beta)
+    pub neg_psi_alpha_plus_log_beta: f32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+    pub _padding3: u32,
+}
+
 /// Input parameters for Beta REDUCE kernel
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -88,6 +103,22 @@ pub struct BetaReduceParams {
     pub log_norm: f32,
 }
 
+/// Input parameters for Beta FUSED multi-grad kernel (with pre-computed digamma)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BetaFusedParams {
+    pub alpha: f32,
+    pub beta: f32,
+    pub count: u32,
+    pub log_norm: f32,
+    /// Pre-computed: psi(alpha+beta) - psi(alpha)
+    pub psi_sum_minus_alpha: f32,
+    /// Pre-computed: psi(alpha+beta) - psi(beta)
+    pub psi_sum_minus_beta: f32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+}
+
 /// Input parameters for InverseGamma REDUCE kernel
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -97,6 +128,21 @@ pub struct InverseGammaReduceParams {
     pub count: u32,
     /// Pre-computed: alpha * ln(beta) - lgamma(alpha)
     pub log_norm: f32,
+}
+
+/// Input parameters for InverseGamma FUSED multi-grad kernel (with pre-computed digamma)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InverseGammaFusedParams {
+    pub alpha: f32,
+    pub beta: f32,
+    pub count: u32,
+    pub log_norm: f32,
+    /// Pre-computed: ln(beta) - psi(alpha)
+    pub log_beta_minus_psi_alpha: f32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+    pub _padding3: u32,
 }
 
 /// Input parameters for Uniform REDUCE kernel
@@ -174,6 +220,21 @@ pub struct StudentTReduceParams {
     pub _padding3: u32,
 }
 
+/// Input parameters for StudentT FUSED multi-grad kernel (with pre-computed digamma)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct StudentTFusedParams {
+    pub loc: f32,
+    pub scale: f32,
+    pub nu: f32,
+    pub count: u32,
+    pub log_norm: f32,
+    /// Pre-computed: 0.5*(psi((nu+1)/2) - psi(nu/2) - 1/nu)
+    pub psi_const: f32,
+    pub _padding1: u32,
+    pub _padding2: u32,
+}
+
 /// Input parameters for LogNormal REDUCE kernel
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -212,4 +273,50 @@ pub struct GpuGradReduceResult {
 pub struct FusedLogpGradResult {
     pub total_log_prob: f32,
     pub total_grad: f32,
+}
+
+/// Result from multi-gradient fused GPU kernel.
+/// Returns log_prob and gradients for ALL distribution parameters.
+#[derive(Debug, Clone)]
+pub struct GpuLikelihoodResult {
+    pub log_prob: f64,
+    pub param_grads: Vec<(usize, f64)>,
+}
+
+/// Result from multi-output fused GPU kernel (returns logp + N grads in one dispatch)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FusedMultiGradResult {
+    pub total_log_prob: f32,
+    pub total_grads: Vec<f32>,
+}
+
+/// Input parameters for Normal indexed reduce kernel (hierarchical models).
+/// y[i] ~ Normal(theta[group[i]], sigma)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct NormalIndexedReduceParams {
+    pub sigma: f32,
+    pub count: u32,
+    pub num_groups: u32,
+    pub _padding: u32,
+}
+
+/// Input parameters for Normal linear predictor fused kernel.
+/// Uniform buffer: sigma, count, p (number of predictors).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct NormalLinpredParams {
+    pub sigma: f32,
+    pub count: u32,
+    pub p: u32,
+    pub _padding: u32,
+}
+
+/// Result from linear predictor GPU kernel.
+/// Returns log_prob, grad_sigma, and per-beta gradients.
+#[derive(Debug, Clone)]
+pub struct LinpredGpuResult {
+    pub total_log_prob: f32,
+    pub grad_sigma: f32,
+    pub grad_beta: Vec<f32>,
 }

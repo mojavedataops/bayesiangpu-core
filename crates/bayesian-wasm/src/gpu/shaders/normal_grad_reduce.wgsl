@@ -4,7 +4,7 @@
 // Each workgroup outputs one partial sum. Final reduction done on CPU.
 //
 // For Normal(mu, sigma) at point x:
-// grad_log_prob = -(x - mu) / sigma^2
+// grad_log_prob w.r.t. mu = (x - mu) / sigma^2
 
 struct Params {
     mu: f32,
@@ -41,8 +41,8 @@ fn main(
             let mu = params.mu;
             let sigma = params.sigma;
             let sigma_sq = sigma * sigma;
-            // grad = -(x - mu) / sigma^2
-            local_sum = local_sum + (-(x - mu) / sigma_sq);
+            // grad_mu = (x - mu) / sigma^2
+            local_sum = local_sum + ((x - mu) / sigma_sq);
         }
     }
 

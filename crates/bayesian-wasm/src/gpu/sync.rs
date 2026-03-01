@@ -20,14 +20,15 @@
 use std::sync::{Arc, OnceLock};
 use wgpu::{BindGroupLayout, ComputePipeline, Device, Queue};
 
-use super::context::{self, GpuContext, PersistentGpuBuffers};
+use super::context::{self, GpuContext, LinpredGpuBuffers, PersistentGpuBuffers};
 pub use super::context::{ChainBuffers, MultiChainGpuBuffers};
 use super::kernels::{
-    BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CauchyReduceParams,
-    ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams, GpuBatchResult,
-    GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalReduceParams,
-    InverseGammaReduceParams, LogNormalReduceParams, NegativeBinomialReduceParams,
-    NormalBatchParams, PoissonReduceParams, StudentTReduceParams, UniformReduceParams,
+    BernoulliReduceParams, BetaFusedParams, BetaReduceParams, BinomialReduceParams,
+    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, FusedMultiGradResult,
+    GammaFusedParams, GammaReduceParams, GpuBatchResult, GpuGradReduceResult, GpuReduceResult,
+    GpuResult, HalfNormalReduceParams, InverseGammaFusedParams, InverseGammaReduceParams,
+    LinpredGpuResult, LogNormalReduceParams, NegativeBinomialReduceParams, NormalBatchParams,
+    PoissonReduceParams, StudentTFusedParams, StudentTReduceParams, UniformReduceParams,
 };
 
 /// Block on an async future using a shared tokio runtime.
@@ -102,6 +103,42 @@ impl GpuContextSync {
             x_values,
             max_params_size,
         )
+    }
+
+    // ==================== Linear Predictor Buffers ====================
+
+    /// Create linpred GPU buffers for y ~ Normal(X @ beta, sigma).
+    pub fn create_linpred_buffers(
+        &self,
+        y_values: &[f32],
+        x_matrix: &[f32],
+        p: u32,
+    ) -> LinpredGpuBuffers {
+        context::create_linpred_buffers(self.inner.device_ref(), y_values, x_matrix, p)
+    }
+
+    /// Run Normal linear predictor fused kernel: y ~ Normal(X @ beta, sigma).
+    pub fn run_normal_linpred_fused(
+        &self,
+        buffers: &LinpredGpuBuffers,
+        beta_values: &[f32],
+        sigma: f32,
+    ) -> Result<LinpredGpuResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.normal_linpred_fused_reduce_pipeline_clone();
+        let layout = self
+            .inner
+            .normal_linpred_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_linpred_fused(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            beta_values,
+            sigma,
+        ))
     }
 
     // ==================== Persistent Reduce kernels (log_prob sum) ====================
@@ -1015,8 +1052,8 @@ impl GpuContextSync {
     }
 
     // ==================== Single-pass fused logp + grad persistent kernels ====================
-    // These use a single fused shader that computes both logp and grad in one pass,
-    // sharing intermediate values to halve global memory reads vs the two-pass approach.
+    // These delegate to the multi-grad fused path and extract logp + first gradient
+    // for backward compatibility with code expecting FusedLogpGradResult.
 
     /// Run single-pass fused Normal logp + grad using persistent buffers.
     pub fn run_normal_single_pass_fused(
@@ -1025,11 +1062,139 @@ impl GpuContextSync {
         mu: f32,
         sigma: f32,
     ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_normal_multi_grad_fused(buffers, mu, sigma)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused HalfNormal logp + grad using persistent buffers.
+    pub fn run_half_normal_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        sigma: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_half_normal_multi_grad_fused(buffers, sigma)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused Exponential logp + grad using persistent buffers.
+    pub fn run_exponential_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        lambda: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_exponential_multi_grad_fused(buffers, lambda)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused Gamma logp + grad using persistent buffers.
+    pub fn run_gamma_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_gamma_multi_grad_fused(buffers, alpha, beta)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused Beta logp + grad using persistent buffers.
+    pub fn run_beta_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_beta_multi_grad_fused(buffers, alpha, beta)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused InverseGamma logp + grad using persistent buffers.
+    pub fn run_inverse_gamma_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_inverse_gamma_multi_grad_fused(buffers, alpha, beta)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused StudentT logp + grad using persistent buffers.
+    pub fn run_student_t_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        nu: f32,
+        loc: f32,
+        scale: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_student_t_multi_grad_fused(buffers, loc, scale, nu)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused Cauchy logp + grad using persistent buffers.
+    pub fn run_cauchy_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        loc: f32,
+        scale: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_cauchy_multi_grad_fused(buffers, loc, scale)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    /// Run single-pass fused LogNormal logp + grad using persistent buffers.
+    pub fn run_lognormal_single_pass_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        mu: f32,
+        sigma: f32,
+    ) -> Result<FusedLogpGradResult, String> {
+        let r = self.run_lognormal_multi_grad_fused(buffers, mu, sigma)?;
+        Ok(FusedLogpGradResult {
+            total_log_prob: r.total_log_prob,
+            total_grad: r.total_grads[0],
+        })
+    }
+
+    // ==================== Multi-gradient fused kernels ====================
+    // These use the updated fused shaders that output gradients for ALL parameters.
+
+    /// Run multi-grad fused Normal logp + grad_mu + grad_sigma.
+    pub fn run_normal_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        mu: f32,
+        sigma: f32,
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.normal_fused_reduce_pipeline_clone();
         let layout = self.inner.normal_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
@@ -1041,186 +1206,150 @@ impl GpuContextSync {
                 count: buffers.count,
                 _padding: 0,
             },
+            3, // logp + grad_mu + grad_sigma
         ))
     }
 
-    /// Run single-pass fused HalfNormal logp + grad using persistent buffers.
-    pub fn run_half_normal_single_pass_fused(
-        &self,
-        buffers: &PersistentGpuBuffers,
-        sigma: f32,
-    ) -> Result<FusedLogpGradResult, String> {
-        let device = self.inner.device_clone();
-        let queue = self.inner.queue_clone();
-        let pipeline = self.inner.half_normal_fused_reduce_pipeline_clone();
-        let layout = self
-            .inner
-            .half_normal_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
-            &device,
-            &queue,
-            &pipeline,
-            &layout,
-            buffers,
-            HalfNormalReduceParams {
-                sigma,
-                count: buffers.count,
-                _padding1: 0,
-                _padding2: 0,
-            },
-        ))
-    }
-
-    /// Run single-pass fused Exponential logp + grad using persistent buffers.
-    pub fn run_exponential_single_pass_fused(
-        &self,
-        buffers: &PersistentGpuBuffers,
-        lambda: f32,
-    ) -> Result<FusedLogpGradResult, String> {
-        let device = self.inner.device_clone();
-        let queue = self.inner.queue_clone();
-        let pipeline = self.inner.exponential_fused_reduce_pipeline_clone();
-        let layout = self
-            .inner
-            .exponential_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
-            &device,
-            &queue,
-            &pipeline,
-            &layout,
-            buffers,
-            ExponentialReduceParams {
-                lambda,
-                count: buffers.count,
-                _padding1: 0,
-                _padding2: 0,
-            },
-        ))
-    }
-
-    /// Run single-pass fused Gamma logp + grad using persistent buffers.
-    pub fn run_gamma_single_pass_fused(
+    /// Run multi-grad fused Beta logp + grad_alpha + grad_beta.
+    pub fn run_beta_multi_grad_fused(
         &self,
         buffers: &PersistentGpuBuffers,
         alpha: f32,
         beta: f32,
-    ) -> Result<FusedLogpGradResult, String> {
-        let device = self.inner.device_clone();
-        let queue = self.inner.queue_clone();
-        let pipeline = self.inner.gamma_fused_reduce_pipeline_clone();
-        let layout = self.inner.gamma_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
-            &device,
-            &queue,
-            &pipeline,
-            &layout,
-            buffers,
-            GammaReduceParams {
-                alpha,
-                beta,
-                count: buffers.count,
-                log_norm: context::gamma_log_norm(alpha, beta),
-            },
-        ))
-    }
-
-    /// Run single-pass fused Beta logp + grad using persistent buffers.
-    pub fn run_beta_single_pass_fused(
-        &self,
-        buffers: &PersistentGpuBuffers,
-        alpha: f32,
-        beta: f32,
-    ) -> Result<FusedLogpGradResult, String> {
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.beta_fused_reduce_pipeline_clone();
         let layout = self.inner.beta_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        let (psi_sum_minus_alpha, psi_sum_minus_beta) = context::beta_fused_psi_consts(alpha, beta);
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
             &layout,
             buffers,
-            BetaReduceParams {
+            BetaFusedParams {
                 alpha,
                 beta,
                 count: buffers.count,
                 log_norm: context::beta_log_norm(alpha, beta),
+                psi_sum_minus_alpha,
+                psi_sum_minus_beta,
+                _padding1: 0,
+                _padding2: 0,
             },
+            3,
         ))
     }
 
-    /// Run single-pass fused InverseGamma logp + grad using persistent buffers.
-    pub fn run_inverse_gamma_single_pass_fused(
+    /// Run multi-grad fused Gamma logp + grad_alpha + grad_beta.
+    pub fn run_gamma_multi_grad_fused(
         &self,
         buffers: &PersistentGpuBuffers,
         alpha: f32,
         beta: f32,
-    ) -> Result<FusedLogpGradResult, String> {
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.gamma_fused_reduce_pipeline_clone();
+        let layout = self.inner.gamma_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            GammaFusedParams {
+                alpha,
+                beta,
+                count: buffers.count,
+                log_norm: context::gamma_log_norm(alpha, beta),
+                neg_psi_alpha_plus_log_beta: context::gamma_fused_psi_const(alpha, beta),
+                _padding1: 0,
+                _padding2: 0,
+                _padding3: 0,
+            },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused InverseGamma logp + grad_alpha + grad_beta.
+    pub fn run_inverse_gamma_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        alpha: f32,
+        beta: f32,
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.inverse_gamma_fused_reduce_pipeline_clone();
         let layout = self
             .inner
             .inverse_gamma_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
             &layout,
             buffers,
-            InverseGammaReduceParams {
+            InverseGammaFusedParams {
                 alpha,
                 beta,
                 count: buffers.count,
                 log_norm: context::inverse_gamma_log_norm(alpha, beta),
+                log_beta_minus_psi_alpha: context::inverse_gamma_fused_psi_const(alpha, beta),
+                _padding1: 0,
+                _padding2: 0,
+                _padding3: 0,
             },
+            3,
         ))
     }
 
-    /// Run single-pass fused StudentT logp + grad using persistent buffers.
-    pub fn run_student_t_single_pass_fused(
+    /// Run multi-grad fused StudentT logp + grad_loc + grad_scale + grad_nu.
+    pub fn run_student_t_multi_grad_fused(
         &self,
         buffers: &PersistentGpuBuffers,
-        nu: f32,
         loc: f32,
         scale: f32,
-    ) -> Result<FusedLogpGradResult, String> {
+        nu: f32,
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.student_t_fused_reduce_pipeline_clone();
         let layout = self.inner.student_t_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
             &layout,
             buffers,
-            StudentTReduceParams {
-                nu,
+            StudentTFusedParams {
                 loc,
                 scale,
+                nu,
                 count: buffers.count,
                 log_norm: context::student_t_log_norm(nu, scale),
+                psi_const: context::student_t_fused_psi_const(nu),
                 _padding1: 0,
                 _padding2: 0,
-                _padding3: 0,
             },
+            4, // logp + grad_loc + grad_scale + grad_nu
         ))
     }
 
-    /// Run single-pass fused Cauchy logp + grad using persistent buffers.
-    pub fn run_cauchy_single_pass_fused(
+    /// Run multi-grad fused Cauchy logp + grad_loc + grad_scale.
+    pub fn run_cauchy_multi_grad_fused(
         &self,
         buffers: &PersistentGpuBuffers,
         loc: f32,
         scale: f32,
-    ) -> Result<FusedLogpGradResult, String> {
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.cauchy_fused_reduce_pipeline_clone();
         let layout = self.inner.cauchy_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
@@ -1232,21 +1361,22 @@ impl GpuContextSync {
                 count: buffers.count,
                 _padding: 0,
             },
+            3,
         ))
     }
 
-    /// Run single-pass fused LogNormal logp + grad using persistent buffers.
-    pub fn run_lognormal_single_pass_fused(
+    /// Run multi-grad fused LogNormal logp + grad_mu + grad_sigma.
+    pub fn run_lognormal_multi_grad_fused(
         &self,
         buffers: &PersistentGpuBuffers,
         mu: f32,
         sigma: f32,
-    ) -> Result<FusedLogpGradResult, String> {
+    ) -> Result<FusedMultiGradResult, String> {
         let device = self.inner.device_clone();
         let queue = self.inner.queue_clone();
         let pipeline = self.inner.lognormal_fused_reduce_pipeline_clone();
         let layout = self.inner.lognormal_fused_reduce_bind_group_layout_clone();
-        block_on(context::run_single_pass_fused_persistent(
+        block_on(context::run_single_pass_fused_persistent_multi(
             &device,
             &queue,
             &pipeline,
@@ -1258,6 +1388,63 @@ impl GpuContextSync {
                 count: buffers.count,
                 log_norm: context::lognormal_log_norm(sigma),
             },
+            3,
+        ))
+    }
+
+    /// Run multi-grad fused HalfNormal logp + grad_sigma.
+    pub fn run_half_normal_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        sigma: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.half_normal_fused_reduce_pipeline_clone();
+        let layout = self
+            .inner
+            .half_normal_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            HalfNormalReduceParams {
+                sigma,
+                count: buffers.count,
+                _padding1: 0,
+                _padding2: 0,
+            },
+            2, // logp + grad_sigma
+        ))
+    }
+
+    /// Run multi-grad fused Exponential logp + grad_lambda.
+    pub fn run_exponential_multi_grad_fused(
+        &self,
+        buffers: &PersistentGpuBuffers,
+        lambda: f32,
+    ) -> Result<FusedMultiGradResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.exponential_fused_reduce_pipeline_clone();
+        let layout = self
+            .inner
+            .exponential_fused_reduce_bind_group_layout_clone();
+        block_on(context::run_single_pass_fused_persistent_multi(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            buffers,
+            ExponentialReduceParams {
+                lambda,
+                count: buffers.count,
+                _padding1: 0,
+                _padding2: 0,
+            },
+            2, // logp + grad_lambda
         ))
     }
 
@@ -2107,6 +2294,39 @@ pub fn run_lognormal_grad_reduce_kernel_sync(
 }
 
 impl GpuContextSync {
+    // ==================== Indexed parameter methods (hierarchical models) ====================
+
+    /// Run indexed Normal reduce for y[i] ~ Normal(theta[group[i]], sigma).
+    ///
+    /// Returns total logp, grad_sigma, and per-group grad_theta.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_normal_indexed_reduce(
+        &self,
+        y_sorted: &[f32],
+        theta: &[f32],
+        group_idx: &[u32],
+        group_boundaries: &[usize],
+        sigma: f32,
+    ) -> Result<context::IndexedNormalResult, String> {
+        let device = self.inner.device_clone();
+        let queue = self.inner.queue_clone();
+        let pipeline = self.inner.normal_indexed_reduce_pipeline_clone();
+        let layout = self.inner.normal_indexed_reduce_bind_group_layout_clone();
+        block_on(context::run_normal_indexed_reduce(
+            &device,
+            &queue,
+            &pipeline,
+            &layout,
+            y_sorted,
+            theta,
+            group_idx,
+            group_boundaries,
+            sigma,
+        ))
+    }
+}
+
+impl GpuContextSync {
     // ==================== Multi-chain methods ====================
 
     /// Create multi-chain GPU buffers with shared observation data.
@@ -2398,6 +2618,176 @@ mod tests {
             }
             None => {
                 eprintln!("Skipping multi-chain GPU test - no GPU available");
+            }
+        }
+    }
+
+    #[test]
+    fn test_normal_linpred_fused() {
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                // Simple regression: y = 2*x1 + 3*x2 + noise
+                // N=100, P=2
+                let n = 100usize;
+                let p = 2u32;
+                let true_beta = [2.0f32, 3.0];
+                let sigma = 1.0f32;
+
+                // Generate design matrix and response
+                let mut x_matrix = vec![0.0f32; n * p as usize];
+                let mut y_values = vec![0.0f32; n];
+                for i in 0..n {
+                    let x1 = (i as f32) * 0.1;
+                    let x2 = (i as f32) * 0.05 + 1.0;
+                    x_matrix[i * 2] = x1;
+                    x_matrix[i * 2 + 1] = x2;
+                    // y = 2*x1 + 3*x2 (no noise for deterministic test)
+                    y_values[i] = true_beta[0] * x1 + true_beta[1] * x2;
+                }
+
+                let buffers = ctx.create_linpred_buffers(&y_values, &x_matrix, p);
+
+                // At true beta, residuals are zero, logp should be N * (-0.5*log(2*pi) - log(sigma))
+                let result = ctx
+                    .run_normal_linpred_fused(&buffers, &true_beta, sigma)
+                    .expect("Linpred kernel should succeed");
+
+                let expected_logp_per_obs = -0.5 * std::f32::consts::TAU.ln() - sigma.ln();
+                let expected_total_logp = expected_logp_per_obs * n as f32;
+                let logp_err = (result.total_log_prob - expected_total_logp).abs();
+                assert!(
+                    logp_err < 0.5,
+                    "Log-prob at true beta should be ~{}, got {} (err={})",
+                    expected_total_logp,
+                    result.total_log_prob,
+                    logp_err
+                );
+
+                // At true beta, residuals are zero, so grad_beta should be ~0
+                for (j, &gb) in result.grad_beta.iter().enumerate() {
+                    assert!(
+                        gb.abs() < 0.01,
+                        "grad_beta[{}] at true beta should be ~0, got {}",
+                        j,
+                        gb
+                    );
+                }
+
+                // Test with perturbed beta - gradients should point toward true beta
+                let perturbed_beta = [1.5f32, 2.5]; // below true values
+                let result2 = ctx
+                    .run_normal_linpred_fused(&buffers, &perturbed_beta, sigma)
+                    .expect("Linpred kernel should succeed");
+
+                // Gradients should be positive (pushing beta upward toward true values)
+                for (j, &gb) in result2.grad_beta.iter().enumerate() {
+                    assert!(
+                        gb > 0.0,
+                        "grad_beta[{}] with beta below true should be positive, got {}",
+                        j,
+                        gb
+                    );
+                }
+
+                // Log-prob at perturbed beta should be lower than at true beta
+                assert!(
+                    result2.total_log_prob < result.total_log_prob,
+                    "Log-prob at perturbed beta ({}) should be less than at true beta ({})",
+                    result2.total_log_prob,
+                    result.total_log_prob
+                );
+            }
+            None => {
+                eprintln!("Skipping linpred GPU test - no GPU available");
+            }
+        }
+    }
+
+    #[test]
+    fn test_normal_indexed_reduce() {
+        // Test hierarchical model: y[i] ~ Normal(theta[group[i]], sigma)
+        // 3 groups with known theta values, check logp and gradients
+        match GpuContextSync::global() {
+            Some(ctx) => {
+                let sigma: f32 = 1.0;
+
+                // 3 groups: theta = [0.0, 2.0, -1.0]
+                let theta: Vec<f32> = vec![0.0, 2.0, -1.0];
+                let num_groups = theta.len();
+
+                // Observations: 4 per group, already sorted by group
+                // Group 0: y = [0.1, -0.2, 0.3, -0.1]
+                // Group 1: y = [1.8, 2.1, 2.3, 1.9]
+                // Group 2: y = [-0.8, -1.2, -0.9, -1.1]
+                let y_sorted: Vec<f32> = vec![
+                    0.1, -0.2, 0.3, -0.1, // group 0
+                    1.8, 2.1, 2.3, 1.9, // group 1
+                    -0.8, -1.2, -0.9, -1.1, // group 2
+                ];
+                let group_idx: Vec<u32> = vec![0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2];
+                let group_boundaries: Vec<usize> = vec![0, 4, 8, 12];
+
+                let result = ctx
+                    .run_normal_indexed_reduce(
+                        &y_sorted,
+                        &theta,
+                        &group_idx,
+                        &group_boundaries,
+                        sigma,
+                    )
+                    .expect("Indexed reduce should succeed");
+
+                // Verify logp: sum of Normal logp for each observation
+                let log_2pi = (2.0 * std::f64::consts::PI).ln();
+                let mut expected_logp = 0.0f64;
+                for (i, &y) in y_sorted.iter().enumerate() {
+                    let mu = theta[group_idx[i] as usize] as f64;
+                    let z = (y as f64 - mu) / sigma as f64;
+                    expected_logp += -0.5 * log_2pi - (sigma as f64).ln() - 0.5 * z * z;
+                }
+                assert!(
+                    (result.total_log_prob - expected_logp).abs() < 0.1,
+                    "logp mismatch: GPU={}, expected={}",
+                    result.total_log_prob,
+                    expected_logp,
+                );
+
+                // Verify grad_sigma
+                let sigma_f64 = sigma as f64;
+                let mut expected_grad_sigma = 0.0f64;
+                for (i, &y) in y_sorted.iter().enumerate() {
+                    let mu = theta[group_idx[i] as usize] as f64;
+                    let z = (y as f64 - mu) / sigma_f64;
+                    expected_grad_sigma += (-1.0 + z * z) / sigma_f64;
+                }
+                assert!(
+                    (result.grad_sigma - expected_grad_sigma).abs() < 0.1,
+                    "grad_sigma mismatch: GPU={}, expected={}",
+                    result.grad_sigma,
+                    expected_grad_sigma,
+                );
+
+                // Verify per-group theta gradients
+                assert_eq!(result.grad_theta.len(), num_groups);
+                for k in 0..num_groups {
+                    let start = group_boundaries[k];
+                    let end = group_boundaries[k + 1];
+                    let mu_k = theta[k] as f64;
+                    let expected_grad: f64 = y_sorted[start..end]
+                        .iter()
+                        .map(|&y| (y as f64 - mu_k) / (sigma_f64 * sigma_f64))
+                        .sum();
+                    assert!(
+                        (result.grad_theta[k] - expected_grad).abs() < 1e-4,
+                        "grad_theta[{}] mismatch: GPU={}, expected={}",
+                        k,
+                        result.grad_theta[k],
+                        expected_grad,
+                    );
+                }
+            }
+            None => {
+                eprintln!("Skipping indexed reduce GPU test - no GPU available");
             }
         }
     }

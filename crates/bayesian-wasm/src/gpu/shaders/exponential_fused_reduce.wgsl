@@ -3,8 +3,10 @@
 // Computes BOTH log_prob and grad_log_prob in a single pass.
 //
 // For Exponential(lambda) at point x >= 0:
-// log_prob = log(lambda) - lambda * x
-// grad     = -lambda  (constant, independent of x)
+// log_prob     = log(lambda) - lambda * x
+// grad_lambda  = 1/lambda - x
+//
+// Output layout: output[wid*2] = logp, output[wid*2+1] = grad_lambda
 
 struct Params {
     lambda: f32,
@@ -42,7 +44,7 @@ fn main(
             let lambda = params.lambda;
 
             local_logp = local_logp + (log(lambda) - lambda * x);
-            local_grad = local_grad + (-lambda);
+            local_grad = local_grad + (1.0 / lambda - x);
         }
     }
 

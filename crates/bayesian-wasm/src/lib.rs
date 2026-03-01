@@ -353,10 +353,10 @@ impl BayesianModel<WasmBackend> for DynamicModel {
                     gpu_ctx.as_ref(),
                     buffers,
                 ) {
-                    Ok((lik_logp, lik_param_idx, lik_grad)) => {
-                        total_log_prob += lik_logp;
-                        if let Some(idx) = lik_param_idx {
-                            gradients[idx] += lik_grad;
+                    Ok(result) => {
+                        total_log_prob += result.log_prob;
+                        for (idx, grad) in result.param_grads {
+                            gradients[idx] += grad;
                         }
                         return Some((total_log_prob, gradients));
                     }
@@ -1238,12 +1238,11 @@ impl DynamicModel {
         // Note: persistent buffers are NOT used here because the caller may pass
         // a different GPU context than the one the buffers were created on.
         // Use logp_and_grad_direct() for the fast persistent-buffer path.
-        let (lik_logp, lik_param_idx, lik_grad) =
-            self.compute_likelihood_gpu(params, observed_f32, spec, gpu_ctx, None)?;
+        let result = self.compute_likelihood_gpu(params, observed_f32, spec, gpu_ctx, None)?;
 
-        total_log_prob += lik_logp;
-        if let Some(idx) = lik_param_idx {
-            gradients[idx] += lik_grad;
+        total_log_prob += result.log_prob;
+        for (idx, grad) in result.param_grads {
+            gradients[idx] += grad;
         }
 
         Ok((total_log_prob, gradients))
@@ -1672,10 +1671,10 @@ impl DynamicModel {
         }
     }
 
-    /// Compute likelihood log_prob and gradient using GPU
+    /// Compute likelihood log_prob and gradients for ALL parameters using GPU.
     ///
-    /// Returns (log_prob, param_index, gradient) where param_index indicates which
-    /// parameter receives the gradient contribution.
+    /// Returns a `GpuLikelihoodResult` with log_prob and a vec of (param_index, gradient)
+    /// pairs for every distribution parameter that references a model parameter.
     fn compute_likelihood_gpu(
         &self,
         params: &[f32],
@@ -1683,81 +1682,368 @@ impl DynamicModel {
         spec: &DistributionSpec,
         gpu_ctx: &gpu::sync::GpuContextSync,
         buffers: Option<&gpu::PersistentGpuBuffers>,
-    ) -> Result<(f64, Option<usize>, f64), String> {
+    ) -> Result<gpu::kernels::GpuLikelihoodResult, String> {
         match spec.dist_type.as_str() {
             "Normal" => {
-                let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
-                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                // Check if loc references a vector parameter (hierarchical model)
+                if let Some((_prior_idx, vec_offset, vec_size)) =
+                    self.resolve_vector_param(&spec.params, "loc")
+                {
+                    // Indexed kernel path: y[i] ~ Normal(theta[group[i]], sigma)
+                    let (scale_val, scale_idx) =
+                        self.resolve_param_value(params, &spec.params, "scale");
+                    let sigma = if scale_idx.is_some() {
+                        scale_val
+                    } else {
+                        scale_val.max(1e-6)
+                    };
 
-                let (log_prob, grad) = if let Some(b) = buffers {
-                    let r = gpu_ctx.run_normal_fused_persistent(b, loc_val, scale)?;
-                    (r.total_log_prob as f64, r.total_grad as f64)
+                    // Extract theta values from params
+                    let theta: Vec<f32> = params[vec_offset..vec_offset + vec_size].to_vec();
+
+                    // Build group index and sort observations
+                    if let Some((sorted_group_idx, sort_order, group_boundaries)) =
+                        self.build_group_index(vec_size)
+                    {
+                        let y_sorted: Vec<f32> = sort_order.iter().map(|&i| observed[i]).collect();
+
+                        let r = gpu_ctx.run_normal_indexed_reduce(
+                            &y_sorted,
+                            &theta,
+                            &sorted_group_idx,
+                            &group_boundaries,
+                            sigma,
+                        )?;
+
+                        let mut grads = Vec::new();
+                        // Per-group theta gradients
+                        for (k, &grad_k) in r.grad_theta.iter().enumerate() {
+                            grads.push((vec_offset + k, grad_k));
+                        }
+                        // Sigma gradient
+                        if let Some(idx) = scale_idx {
+                            grads.push((idx, r.grad_sigma));
+                        }
+
+                        return Ok(gpu::kernels::GpuLikelihoodResult {
+                            log_prob: r.total_log_prob,
+                            param_grads: grads,
+                        });
+                    }
+                    // Fall through to scalar path if no group index available
+                }
+
+                // Scalar loc path (original)
+                let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
+                let (scale_val, scale_idx) =
+                    self.resolve_param_value(params, &spec.params, "scale");
+                let scale = if scale_idx.is_some() {
+                    scale_val
+                } else {
+                    scale_val.max(1e-6)
+                };
+
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_normal_multi_grad_fused(b, loc_val, scale)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = scale_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
                 } else {
                     let lp = gpu_ctx.run_normal_reduce(observed, loc_val, scale)? as f64;
                     let gr = gpu_ctx.run_normal_grad_reduce(observed, loc_val, scale)? as f64;
-                    (lp, gr)
-                };
-
-                Ok((log_prob, loc_idx, grad))
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
             }
             "HalfNormal" => {
-                let scale = self.get_param_f64(&spec.params, "scale", 1.0) as f32;
+                let (scale_val, scale_idx) =
+                    self.resolve_param_value(params, &spec.params, "scale");
 
-                let log_prob = if let Some(b) = buffers {
-                    gpu_ctx.run_half_normal_reduce_persistent(b, scale)? as f64
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_half_normal_multi_grad_fused(b, scale_val)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = scale_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
                 } else {
-                    gpu_ctx.run_half_normal_reduce(observed, scale)? as f64
-                };
-                // HalfNormal gradient is w.r.t. data, not a model parameter
-                // For now, return 0 gradient contribution
-                Ok((log_prob, None, 0.0))
+                    let lp = gpu_ctx.run_half_normal_reduce(observed, scale_val)? as f64;
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: Vec::new(),
+                    })
+                }
             }
             "Exponential" => {
                 let (lambda_val, lambda_idx) =
                     self.resolve_param_value(params, &spec.params, "rate");
 
-                let (log_prob, grad) = if let Some(b) = buffers {
-                    let r = gpu_ctx.run_exponential_fused_persistent(b, lambda_val)?;
-                    (r.total_log_prob as f64, r.total_grad as f64)
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_exponential_multi_grad_fused(b, lambda_val)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = lambda_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
                 } else {
                     let lp = gpu_ctx.run_exponential_reduce(observed, lambda_val)? as f64;
                     let gr = gpu_ctx.run_exponential_grad_reduce(observed, lambda_val)? as f64;
-                    (lp, gr)
-                };
-
-                Ok((log_prob, lambda_idx, grad))
+                    let mut grads = Vec::new();
+                    if let Some(idx) = lambda_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
             }
             "Gamma" => {
                 let (alpha_val, alpha_idx) =
                     self.resolve_param_value(params, &spec.params, "shape");
-                let beta = self.get_param_f64(&spec.params, "rate", 1.0) as f32;
+                let (beta_val, beta_idx) = self.resolve_param_value(params, &spec.params, "rate");
+                let beta = if beta_idx.is_some() {
+                    beta_val
+                } else {
+                    beta_val.max(1e-6)
+                };
 
-                let (log_prob, grad) = if let Some(b) = buffers {
-                    let r = gpu_ctx.run_gamma_fused_persistent(b, alpha_val, beta)?;
-                    (r.total_log_prob as f64, r.total_grad as f64)
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_gamma_multi_grad_fused(b, alpha_val, beta)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = beta_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
                 } else {
                     let lp = gpu_ctx.run_gamma_reduce(observed, alpha_val, beta)? as f64;
                     let gr = gpu_ctx.run_gamma_grad_reduce(observed, alpha_val, beta)? as f64;
-                    (lp, gr)
-                };
-
-                Ok((log_prob, alpha_idx, grad))
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
             }
             "Beta" => {
                 let (alpha_val, alpha_idx) =
                     self.resolve_param_value(params, &spec.params, "alpha");
-                let beta = self.get_param_f64(&spec.params, "beta", 1.0) as f32;
+                let (beta_val, beta_idx) = self.resolve_param_value(params, &spec.params, "beta");
+                let beta = if beta_idx.is_some() {
+                    beta_val
+                } else {
+                    beta_val.max(1e-6)
+                };
 
-                let (log_prob, grad) = if let Some(b) = buffers {
-                    let r = gpu_ctx.run_beta_fused_persistent(b, alpha_val, beta)?;
-                    (r.total_log_prob as f64, r.total_grad as f64)
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_beta_multi_grad_fused(b, alpha_val, beta)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = beta_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
                 } else {
                     let lp = gpu_ctx.run_beta_reduce(observed, alpha_val, beta)? as f64;
                     let gr = gpu_ctx.run_beta_grad_reduce(observed, alpha_val, beta)? as f64;
-                    (lp, gr)
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
+            }
+            "InverseGamma" => {
+                let (alpha_val, alpha_idx) =
+                    self.resolve_param_value(params, &spec.params, "shape");
+                let (beta_val, beta_idx) = self.resolve_param_value(params, &spec.params, "scale");
+                let beta = if beta_idx.is_some() {
+                    beta_val
+                } else {
+                    beta_val.max(1e-6)
                 };
 
-                Ok((log_prob, alpha_idx, grad))
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_inverse_gamma_multi_grad_fused(b, alpha_val, beta)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = beta_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
+                } else {
+                    let lp = gpu_ctx.run_inverse_gamma_reduce(observed, alpha_val, beta)? as f64;
+                    let gr =
+                        gpu_ctx.run_inverse_gamma_grad_reduce(observed, alpha_val, beta)? as f64;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = alpha_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
+            }
+            "StudentT" => {
+                let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
+                let (scale_val, scale_idx) =
+                    self.resolve_param_value(params, &spec.params, "scale");
+                let (nu_val, nu_idx) = self.resolve_param_value(params, &spec.params, "nu");
+                let scale = if scale_idx.is_some() {
+                    scale_val
+                } else {
+                    scale_val.max(1e-6)
+                };
+                let nu = if nu_idx.is_some() {
+                    nu_val
+                } else {
+                    nu_val.max(1e-6)
+                };
+
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_student_t_multi_grad_fused(b, loc_val, scale, nu)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = scale_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    if let Some(idx) = nu_idx {
+                        grads.push((idx, r.total_grads[2] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
+                } else {
+                    let lp = gpu_ctx.run_student_t_reduce(observed, nu_val, loc_val, scale)? as f64;
+                    let gr =
+                        gpu_ctx.run_student_t_grad_reduce(observed, nu_val, loc_val, scale)? as f64;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
+            }
+            "Cauchy" => {
+                let (loc_val, loc_idx) = self.resolve_param_value(params, &spec.params, "loc");
+                let (scale_val, scale_idx) =
+                    self.resolve_param_value(params, &spec.params, "scale");
+                let scale = if scale_idx.is_some() {
+                    scale_val
+                } else {
+                    scale_val.max(1e-6)
+                };
+
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_cauchy_multi_grad_fused(b, loc_val, scale)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = scale_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
+                } else {
+                    let lp = gpu_ctx.run_cauchy_reduce(observed, loc_val, scale)? as f64;
+                    let gr = gpu_ctx.run_cauchy_grad_reduce(observed, loc_val, scale)? as f64;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = loc_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
+            }
+            "LogNormal" => {
+                let (mu_val, mu_idx) = self.resolve_param_value(params, &spec.params, "mu");
+                let (sigma_val, sigma_idx) =
+                    self.resolve_param_value(params, &spec.params, "sigma");
+                let sigma = if sigma_idx.is_some() {
+                    sigma_val
+                } else {
+                    sigma_val.max(1e-6)
+                };
+
+                if let Some(b) = buffers {
+                    let r = gpu_ctx.run_lognormal_multi_grad_fused(b, mu_val, sigma)?;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = mu_idx {
+                        grads.push((idx, r.total_grads[0] as f64));
+                    }
+                    if let Some(idx) = sigma_idx {
+                        grads.push((idx, r.total_grads[1] as f64));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: r.total_log_prob as f64,
+                        param_grads: grads,
+                    })
+                } else {
+                    let lp = gpu_ctx.run_lognormal_reduce(observed, mu_val, sigma)? as f64;
+                    let gr = gpu_ctx.run_lognormal_grad_reduce(observed, mu_val, sigma)? as f64;
+                    let mut grads = Vec::new();
+                    if let Some(idx) = mu_idx {
+                        grads.push((idx, gr));
+                    }
+                    Ok(gpu::kernels::GpuLikelihoodResult {
+                        log_prob: lp,
+                        param_grads: grads,
+                    })
+                }
             }
             "Bernoulli" => {
                 let (p_val, p_idx) = self.resolve_param_value(params, &spec.params, "p");
@@ -1767,8 +2053,6 @@ impl DynamicModel {
                 } else {
                     gpu_ctx.run_bernoulli_reduce(observed, p_val)? as f64
                 };
-                // Bernoulli gradient: d/dp log(Bernoulli) = y/p - (1-y)/(1-p)
-                // We don't have a dedicated gradient kernel, so compute analytically
                 let mut grad = 0.0f64;
                 for &y in observed {
                     if y == 1.0 {
@@ -1777,8 +2061,14 @@ impl DynamicModel {
                         grad -= 1.0 / (1.0 - p_val) as f64;
                     }
                 }
-
-                Ok((log_prob, p_idx, grad))
+                let mut grads = Vec::new();
+                if let Some(idx) = p_idx {
+                    grads.push((idx, grad));
+                }
+                Ok(gpu::kernels::GpuLikelihoodResult {
+                    log_prob,
+                    param_grads: grads,
+                })
             }
             "Poisson" => {
                 let (rate_val, rate_idx) = self.resolve_param_value(params, &spec.params, "rate");
@@ -1788,18 +2078,23 @@ impl DynamicModel {
                 } else {
                     gpu_ctx.run_poisson_reduce(observed, rate_val)? as f64
                 };
-                // Poisson gradient: d/d_rate log(Poisson) = k/rate - 1
                 let mut grad = 0.0f64;
                 for &y in observed {
                     grad += y as f64 / rate_val as f64 - 1.0;
                 }
-
-                Ok((log_prob, rate_idx, grad))
+                let mut grads = Vec::new();
+                if let Some(idx) = rate_idx {
+                    grads.push((idx, grad));
+                }
+                Ok(gpu::kernels::GpuLikelihoodResult {
+                    log_prob,
+                    param_grads: grads,
+                })
             }
-            _ => {
-                // Unsupported distribution - return zeros
-                Ok((0.0, None, 0.0))
-            }
+            _ => Ok(gpu::kernels::GpuLikelihoodResult {
+                log_prob: 0.0,
+                param_grads: Vec::new(),
+            }),
         }
     }
 
@@ -1829,6 +2124,64 @@ impl DynamicModel {
         }
     }
 
+    /// Check if a likelihood parameter references a vector prior (size > 1).
+    /// Returns Some((prior_idx, offset, size)) if it does, None otherwise.
+    fn resolve_vector_param(
+        &self,
+        spec_params: &HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<(usize, usize, usize)> {
+        if let Some(serde_json::Value::String(s)) = spec_params.get(key) {
+            if let Some(idx) = self.prior_names.iter().position(|n| n == s) {
+                let size = self.prior_sizes[idx];
+                if size > 1 {
+                    return Some((idx, self.prior_offsets[idx], size));
+                }
+            }
+        }
+        None
+    }
+
+    /// Build indexed kernel data for a vector parameter.
+    ///
+    /// For hierarchical models where observations map to groups via a `known` field
+    /// (e.g., "group" in likelihood.known), this builds:
+    /// - group_idx: per-observation group assignment (u32)
+    /// - sort_order: indices that sort observations by group
+    /// - group_boundaries: start index of each group in the sorted array (K+1 values)
+    fn build_group_index(&self, num_groups: usize) -> Option<(Vec<u32>, Vec<usize>, Vec<usize>)> {
+        // Look for a "group" field in likelihood.known
+        let group_data = self.likelihood.known.get("group")?;
+        let n = self.likelihood.observed.len();
+        if group_data.len() != n {
+            return None;
+        }
+
+        let group_idx: Vec<u32> = group_data.iter().map(|&g| g as u32).collect();
+
+        // Sort indices by group
+        let mut sort_order: Vec<usize> = (0..n).collect();
+        sort_order.sort_by_key(|&i| group_idx[i]);
+
+        // Compute group boundaries in sorted order
+        let mut group_boundaries = vec![0usize; num_groups + 1];
+        for &idx in &sort_order {
+            let g = group_idx[idx] as usize;
+            if g < num_groups {
+                group_boundaries[g + 1] += 1;
+            }
+        }
+        // Convert counts to cumulative offsets
+        for k in 1..=num_groups {
+            group_boundaries[k] += group_boundaries[k - 1];
+        }
+
+        // Build sorted group_idx
+        let sorted_group_idx: Vec<u32> = sort_order.iter().map(|&i| group_idx[i]).collect();
+
+        Some((sorted_group_idx, sort_order, group_boundaries))
+    }
+
     /// Initialize multi-chain GPU buffers for batched dispatch.
     ///
     /// Call this before sampling if you want all chains to share observation data
@@ -1847,7 +2200,7 @@ impl DynamicModel {
     /// Compute likelihood logp + grad for multiple chains in a single GPU dispatch.
     ///
     /// Each element of `chain_params_list` is the parameter vector for one chain.
-    /// Returns Vec<(log_prob, param_idx, grad)> with one entry per chain, matching
+    /// Returns Vec<GpuLikelihoodResult> with one entry per chain, matching
     /// the signature of `compute_likelihood_gpu`.
     ///
     /// Falls back to sequential per-chain computation if multi-chain buffers are
@@ -1859,7 +2212,7 @@ impl DynamicModel {
         observed: &[f32],
         spec: &DistributionSpec,
         gpu_ctx: &gpu::sync::GpuContextSync,
-    ) -> Result<Vec<(f64, Option<usize>, f64)>, String> {
+    ) -> Result<Vec<gpu::kernels::GpuLikelihoodResult>, String> {
         let num_chains = chain_params_list.len();
         let mc_buffers = self.multi_chain_buffers.as_deref();
 
@@ -1888,7 +2241,16 @@ impl DynamicModel {
                 return Ok(fused_results
                     .into_iter()
                     .zip(loc_indices)
-                    .map(|(r, idx)| (r.total_log_prob as f64, idx, r.total_grad as f64))
+                    .map(|(r, idx)| {
+                        let mut grads = Vec::new();
+                        if let Some(i) = idx {
+                            grads.push((i, r.total_grad as f64));
+                        }
+                        gpu::kernels::GpuLikelihoodResult {
+                            log_prob: r.total_log_prob as f64,
+                            param_grads: grads,
+                        }
+                    })
                     .collect());
             }
         }

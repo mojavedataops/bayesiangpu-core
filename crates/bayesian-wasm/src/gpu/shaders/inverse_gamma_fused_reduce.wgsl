@@ -1,20 +1,23 @@
-// InverseGamma distribution FUSED logp + grad REDUCE kernel
+// InverseGamma distribution FUSED logp + multi-grad REDUCE kernel
 //
-// Computes BOTH log_prob and grad_log_prob in a single pass, sharing
-// intermediate values (1/x, log(x)) to halve global memory reads.
+// Computes log_prob AND gradients for ALL parameters in a single pass.
 //
 // For InverseGamma(alpha, beta) at point x > 0:
-// log_prob = log_norm - (alpha + 1) * log(x) - beta / x
-// grad     = -(alpha + 1) / x + beta / x^2
+// log_prob    = log_norm - (alpha + 1) * log(x) - beta / x
+// grad_alpha  = -log(x) + log_beta_minus_psi_alpha   (pre-computed: ln(beta) - psi(alpha))
+// grad_beta   = alpha / beta - 1 / x
 //
-// log_norm = alpha * ln(beta) - lgamma(alpha)
-// (pre-computed on CPU and passed via params)
+// Output layout: output[wid*3] = logp, output[wid*3+1] = grad_alpha, output[wid*3+2] = grad_beta
 
 struct Params {
     alpha: f32,
     beta: f32,
     count: u32,
     log_norm: f32,
+    log_beta_minus_psi_alpha: f32,
+    _padding1: u32,
+    _padding2: u32,
+    _padding3: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
@@ -22,7 +25,8 @@ struct Params {
 @group(0) @binding(2) var<storage, read_write> output: array<f32>;
 
 var<workgroup> shared_logp: array<f32, 256>;
-var<workgroup> shared_grad: array<f32, 256>;
+var<workgroup> shared_grad_alpha: array<f32, 256>;
+var<workgroup> shared_grad_beta: array<f32, 256>;
 
 const WORKGROUP_SIZE: u32 = 256u;
 const ELEMS_PER_THREAD: u32 = 4u;
@@ -36,7 +40,8 @@ fn main(
     let lid = local_id.x;
 
     var local_logp: f32 = 0.0;
-    var local_grad: f32 = 0.0;
+    var local_grad_alpha: f32 = 0.0;
+    var local_grad_beta: f32 = 0.0;
 
     let base = workgroup_id.x * (256u * ELEMS_PER_THREAD) + lid;
     for (var i: u32 = 0u; i < ELEMS_PER_THREAD; i = i + 1u) {
@@ -46,32 +51,34 @@ fn main(
             let alpha = params.alpha;
             let beta_param = params.beta;
 
-            // Shared intermediates: log(x), 1/x, 1/x^2
             let log_x = log(x);
             let inv_x = 1.0 / x;
-            let inv_x_sq = inv_x * inv_x;
 
             local_logp = local_logp + (params.log_norm - (alpha + 1.0) * log_x - beta_param * inv_x);
-            local_grad = local_grad + (-(alpha + 1.0) * inv_x + beta_param * inv_x_sq);
+            local_grad_alpha = local_grad_alpha + (-log_x + params.log_beta_minus_psi_alpha);
+            local_grad_beta = local_grad_beta + (alpha / beta_param - inv_x);
         }
     }
 
     shared_logp[lid] = local_logp;
-    shared_grad[lid] = local_grad;
+    shared_grad_alpha[lid] = local_grad_alpha;
+    shared_grad_beta[lid] = local_grad_beta;
     workgroupBarrier();
 
-    // Tree reduce both arrays
+    // Tree reduce all arrays
     for (var stride: u32 = WORKGROUP_SIZE / 2u; stride > 0u; stride = stride / 2u) {
         if (lid < stride) {
             shared_logp[lid] = shared_logp[lid] + shared_logp[lid + stride];
-            shared_grad[lid] = shared_grad[lid] + shared_grad[lid + stride];
+            shared_grad_alpha[lid] = shared_grad_alpha[lid] + shared_grad_alpha[lid + stride];
+            shared_grad_beta[lid] = shared_grad_beta[lid] + shared_grad_beta[lid + stride];
         }
         workgroupBarrier();
     }
 
-    // Interleaved output: logp at even indices, grad at odd indices
+    // Output: 3 values per workgroup
     if (lid == 0u) {
-        output[workgroup_id.x * 2u] = shared_logp[0];
-        output[workgroup_id.x * 2u + 1u] = shared_grad[0];
+        output[workgroup_id.x * 3u] = shared_logp[0];
+        output[workgroup_id.x * 3u + 1u] = shared_grad_alpha[0];
+        output[workgroup_id.x * 3u + 2u] = shared_grad_beta[0];
     }
 }

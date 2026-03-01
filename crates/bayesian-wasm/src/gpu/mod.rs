@@ -19,20 +19,23 @@
 //! ```
 
 mod context;
-mod kernels;
+pub mod kernels;
 
 #[cfg(feature = "sync-gpu")]
 pub mod sync;
 
 pub use context::GpuContext;
+pub use context::LinpredGpuBuffers;
 pub use context::PersistentGpuBuffers;
-pub use context::{ChainBuffers, MultiChainGpuBuffers};
+pub use context::{ChainBuffers, IndexedNormalResult, MultiChainGpuBuffers};
 pub use kernels::{
-    BernoulliReduceParams, BetaReduceParams, BinomialReduceParams, CategoricalReduceParams,
-    CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult, GammaReduceParams,
-    GpuBatchResult, GpuGradReduceResult, GpuReduceResult, GpuResult, HalfNormalParams,
-    HalfNormalReduceParams, InverseGammaReduceParams, LogNormalReduceParams,
-    NegativeBinomialReduceParams, NormalBatchParams, NormalParams, PoissonReduceParams,
+    BernoulliReduceParams, BetaFusedParams, BetaReduceParams, BinomialReduceParams,
+    CategoricalReduceParams, CauchyReduceParams, ExponentialReduceParams, FusedLogpGradResult,
+    FusedMultiGradResult, GammaFusedParams, GammaReduceParams, GpuBatchResult, GpuGradReduceResult,
+    GpuLikelihoodResult, GpuReduceResult, GpuResult, HalfNormalParams, HalfNormalReduceParams,
+    InverseGammaFusedParams, InverseGammaReduceParams, LinpredGpuResult, LogNormalReduceParams,
+    NegativeBinomialReduceParams, NormalBatchParams, NormalIndexedReduceParams,
+    NormalLinpredParams, NormalParams, PoissonReduceParams, StudentTFusedParams,
     StudentTReduceParams, UniformReduceParams,
 };
 

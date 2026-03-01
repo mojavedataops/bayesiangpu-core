@@ -1,11 +1,12 @@
 // HalfNormal distribution FUSED logp + grad REDUCE kernel
 //
-// Computes BOTH log_prob and grad_log_prob in a single pass, sharing
-// intermediate values (z) to halve global memory reads.
+// Computes BOTH log_prob and grad_log_prob in a single pass.
 //
 // For HalfNormal(sigma) at point x >= 0:
-// log_prob = log(sqrt(2/pi)) - log(sigma) - 0.5 * z^2
-// grad     = -x / sigma^2    (where z = x / sigma)
+// log_prob     = log(sqrt(2/pi)) - log(sigma) - 0.5 * z^2
+// grad_sigma   = (-1 + z^2) / sigma    (where z = x / sigma)
+//
+// Output layout: output[wid*2] = logp, output[wid*2+1] = grad_sigma
 
 struct Params {
     sigma: f32,
@@ -42,13 +43,12 @@ fn main(
         if (data_idx < params.count) {
             let x = x_values[data_idx];
             let sigma = params.sigma;
-            let sigma_sq = sigma * sigma;
 
-            // Shared intermediate: z = x / sigma
             let z = x / sigma;
+            let z_sq = z * z;
 
-            local_logp = local_logp + (LOG_SQRT_2_OVER_PI - log(sigma) - 0.5 * z * z);
-            local_grad = local_grad + (-x / sigma_sq);
+            local_logp = local_logp + (LOG_SQRT_2_OVER_PI - log(sigma) - 0.5 * z_sq);
+            local_grad = local_grad + ((-1.0 + z_sq) / sigma);
         }
     }
 
