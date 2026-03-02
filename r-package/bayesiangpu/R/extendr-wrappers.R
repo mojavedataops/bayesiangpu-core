@@ -42,5 +42,6 @@ zero_inflated_poisson_dist <- function(rate, zero_prob) .Call(wrap__zero_inflate
 zero_inflated_neg_binomial_dist <- function(r, p, zero_prob) .Call(wrap__zero_inflated_neg_binomial_dist, r, p, zero_prob)
 hypergeometric_dist <- function(big_n, big_k, n) .Call(wrap__hypergeometric_dist, big_n, big_k, n)
 ordered_logistic_dist <- function(eta, cutpoints) .Call(wrap__ordered_logistic_dist, eta, cutpoints)
+lkj_corr_dist <- function(dim, eta) .Call(wrap__lkj_corr_dist, dim, eta)
 run_nuts_sampling <- function(model_json, num_samples, num_warmup, num_chains, target_accept, seed) .Call(wrap__run_nuts_sampling, model_json, num_samples, num_warmup, num_chains, target_accept, seed)
 run_advi <- function(model_json, method, num_iterations, num_samples, learning_rate, seed) .Call(wrap__run_advi, model_json, method, num_iterations, num_samples, learning_rate, seed)
