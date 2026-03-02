@@ -56,6 +56,8 @@
   : Hypergeometric Distribution
 - [`OrderedLogistic()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/OrderedLogistic.md)
   : Ordered Logistic Distribution
+- [`LKJCorr()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/LKJCorr.md)
+  : LKJ Correlation Distribution
 - [`Pareto()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Pareto.md)
   : Pareto Distribution
 - [`Laplace()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/Laplace.md)
@@ -81,6 +83,8 @@
   : Add a parameter to a model (pipe-friendly)
 - [`observe()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/observe.md)
   : Set observed data on a model (pipe-friendly)
+- [`LinearPredictor()`](https://mojavedataops.github.io/bayesiangpu-core/r/reference/LinearPredictor.md)
+  : Create a Linear Predictor for regression models
 
 ## Sampling
 
