@@ -179,14 +179,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bayesian-gpu-model"
+version = "0.1.0"
+dependencies = [
+ "bayesian-wasm",
+ "libm",
+ "serde_json",
+]
+
+[[package]]
 name = "bayesian-py"
 version = "0.1.0"
 dependencies = [
  "bayesian-core",
  "bayesian-diagnostics",
+ "bayesian-gpu-model",
  "bayesian-rng",
  "bayesian-sampler",
- "bayesian-wasm",
  "burn",
  "burn-autodiff",
  "burn-wgpu",

@@ -19,11 +19,9 @@ use bayesian_sampler::{
 };
 
 #[cfg(feature = "gpu")]
-use bayesian_wasm::gpu_model::{self, GpuModelSpec};
-#[cfg(feature = "gpu")]
-use bayesian_wasm::gpu::sync::GpuContextSync;
-#[cfg(feature = "gpu")]
-use bayesian_wasm::gpu::PersistentGpuBuffers;
+use bayesian_gpu_model::{
+    can_use_gpu, gpu_logp_and_grad, GpuContextSync, GpuModelSpec, PersistentGpuBuffers,
+};
 #[cfg(feature = "gpu")]
 use std::sync::Arc;
 
@@ -695,7 +693,7 @@ impl DynamicModel {
                 if let Some(ref likelihood) = spec.likelihood {
                     let observed_f32: Vec<f32> =
                         likelihood.observed.iter().map(|&x| x as f32).collect();
-                    if gpu_model::can_use_gpu(
+                    if can_use_gpu(
                         &likelihood.distribution.dist_type,
                         observed_f32.len(),
                     ) {
@@ -1102,7 +1100,7 @@ impl BayesianModel<RBackend> for DynamicModel {
             .iter()
             .map(|&x| x as f32)
             .collect();
-        match gpu_model::gpu_logp_and_grad(spec, params, &observed, gpu_ctx, buffers) {
+        match gpu_logp_and_grad(spec, params, &observed, gpu_ctx, buffers) {
             Ok(result) => Some(result),
             Err(_) => None, // Fall back to autodiff
         }

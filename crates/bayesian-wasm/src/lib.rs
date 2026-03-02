@@ -37,10 +37,6 @@ pub use backend::{get_backend_type, init_backend, is_webgpu_available, WasmBacke
 #[cfg(feature = "direct-gpu")]
 pub mod gpu;
 
-// Standalone GPU model dispatch functions (used by Python/R bindings)
-#[cfg(feature = "sync-gpu")]
-pub mod gpu_model;
-
 // When the `console_error_panic_hook` feature is enabled, we can call the
 // `set_panic_hook` function at least once during initialization, and then
 // we will get better error messages if our code ever panics.

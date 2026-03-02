@@ -5,6 +5,7 @@ members = [
     "crates/bayesian-rng",
     "crates/bayesian-diagnostics",
     "crates/bayesian-wasm",
+    "crates/bayesian-gpu-model",
     "crates/bayesian-py",
 ]
 default-members = [

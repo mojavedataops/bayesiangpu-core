@@ -11,6 +11,7 @@ on:
       - 'crates/bayesian-diagnostics/**'
       - 'crates/bayesian-rng/**'
       - 'crates/bayesian-wasm/**'
+      - 'crates/bayesian-gpu-model/**'
   pull_request:
     branches: [main]
     paths:
@@ -20,6 +21,7 @@ on:
       - 'crates/bayesian-diagnostics/**'
       - 'crates/bayesian-rng/**'
       - 'crates/bayesian-wasm/**'
+      - 'crates/bayesian-gpu-model/**'
   workflow_dispatch:
 
 permissions:
@@ -71,6 +73,7 @@ jobs:
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-wasm r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-gpu-model r-package/bayesiangpu/src/rust/crates/
           # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
@@ -148,6 +151,7 @@ jobs:
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-wasm r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-gpu-model r-package/bayesiangpu/src/rust/crates/
           # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
@@ -204,6 +208,7 @@ jobs:
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-wasm r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-gpu-model r-package/bayesiangpu/src/rust/crates/
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
           mv "$CARGO_TOML.tmp" "$CARGO_TOML"

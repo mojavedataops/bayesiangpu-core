@@ -30,12 +30,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # GPU acceleration (optional)
-bayesian-wasm = { path = "../bayesian-wasm", default-features = false, features = ["sync-gpu", "ndarray"], optional = true }
+bayesian-gpu-model = { path = "../bayesian-gpu-model", optional = true }
 
 [features]
 default = []
 wgpu = ["burn/wgpu", "burn-wgpu", "bayesian-core/wgpu", "bayesian-sampler/wgpu", "bayesian-rng/wgpu"]
-gpu = ["dep:bayesian-wasm"]
+gpu = ["dep:bayesian-gpu-model"]
 
 [dev-dependencies]
 pyo3 = { version = "0.23", features = ["auto-initialize"] }

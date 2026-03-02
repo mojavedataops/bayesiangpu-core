@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::gpu::kernels::GpuLikelihoodResult;
-use crate::gpu::sync::GpuContextSync;
-use crate::gpu::PersistentGpuBuffers;
+use bayesian_wasm::gpu::kernels::GpuLikelihoodResult;
+use bayesian_wasm::gpu::sync::GpuContextSync;
+use bayesian_wasm::gpu::PersistentGpuBuffers;
 
 /// Minimum data size to use GPU (below this, CPU is faster due to dispatch overhead)
 pub const GPU_THRESHOLD: usize = 256;

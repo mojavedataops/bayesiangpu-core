@@ -1,0 +1,9 @@
+[package]
+name = "bayesian-gpu-model"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+libm = "0.2"
+bayesian-wasm = { path = "../bayesian-wasm", default-features = false, features = ["sync-gpu"] }
