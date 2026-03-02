@@ -10,6 +10,7 @@ on:
       - 'crates/bayesian-sampler/**'
       - 'crates/bayesian-diagnostics/**'
       - 'crates/bayesian-rng/**'
+      - 'crates/bayesian-wasm/**'
   pull_request:
     branches: [main]
     paths:
@@ -18,6 +19,7 @@ on:
       - 'crates/bayesian-sampler/**'
       - 'crates/bayesian-diagnostics/**'
       - 'crates/bayesian-rng/**'
+      - 'crates/bayesian-wasm/**'
   workflow_dispatch:
 
 permissions:
@@ -68,6 +70,7 @@ jobs:
           cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-wasm r-package/bayesiangpu/src/rust/crates/
           # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
@@ -78,11 +81,16 @@ jobs:
               -e 's/^version\.workspace = true$/version = "0.1.0"/' \
               -e 's/^edition\.workspace = true$/edition = "2021"/' \
               -e 's/^license\.workspace = true$/license = "MIT"/' \
+              -e 's/^repository\.workspace = true$//' \
               -e '/^burn-autodiff/s/workspace = true/version = "0.20"/' \
-              -e '/^burn-wgpu/s/workspace = true/version = "0.20", default-features = false/' \
-              -e '/^burn /s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^burn-wgpu/s/workspace = true/version = "0.20"/' \
+              -e '/^burn /s/workspace = true/version = "0.20"/' \
               -e '/^serde_json/s/workspace = true/version = "1.0"/' \
               -e '/^serde /s/workspace = true/version = "1.0", features = ["derive"]/' \
+              -e '/^wasm-bindgen /s/workspace = true/version = "0.2"/' \
+              -e '/^js-sys/s/workspace = true/version = "0.3"/' \
+              -e '/^web-sys/s/workspace = true/version = "0.3", features = ["console"]/' \
+              -e '/^getrandom/s/workspace = true/version = "0.3", features = ["wasm_js"]/' \
               "$f" > "$f.tmp" && mv "$f.tmp" "$f"
           done
 
@@ -139,6 +147,7 @@ jobs:
           cp -r crates/bayesian-sampler r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-diagnostics r-package/bayesiangpu/src/rust/crates/
           cp -r crates/bayesian-rng r-package/bayesiangpu/src/rust/crates/
+          cp -r crates/bayesian-wasm r-package/bayesiangpu/src/rust/crates/
           # Patch R package Cargo.toml to use vendored crate paths
           CARGO_TOML=r-package/bayesiangpu/src/rust/Cargo.toml
           sed 's|path = "../../../../crates/|path = "./crates/|g' "$CARGO_TOML" > "$CARGO_TOML.tmp"
@@ -149,11 +158,16 @@ jobs:
               -e 's/^version\.workspace = true$/version = "0.1.0"/' \
               -e 's/^edition\.workspace = true$/edition = "2021"/' \
               -e 's/^license\.workspace = true$/license = "MIT"/' \
+              -e 's/^repository\.workspace = true$//' \
               -e '/^burn-autodiff/s/workspace = true/version = "0.20"/' \
-              -e '/^burn-wgpu/s/workspace = true/version = "0.20", default-features = false/' \
-              -e '/^burn /s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^burn-wgpu/s/workspace = true/version = "0.20"/' \
+              -e '/^burn /s/workspace = true/version = "0.20"/' \
               -e '/^serde_json/s/workspace = true/version = "1.0"/' \
               -e '/^serde /s/workspace = true/version = "1.0", features = ["derive"]/' \
+              -e '/^wasm-bindgen /s/workspace = true/version = "0.2"/' \
+              -e '/^js-sys/s/workspace = true/version = "0.3"/' \
+              -e '/^web-sys/s/workspace = true/version = "0.3", features = ["console"]/' \
+              -e '/^getrandom/s/workspace = true/version = "0.3", features = ["wasm_js"]/' \
               "$f" > "$f.tmp" && mv "$f.tmp" "$f"
           done
 
@@ -198,8 +212,8 @@ jobs:
               -e 's/^edition\.workspace = true$/edition = "2021"/' \
               -e 's/^license\.workspace = true$/license = "MIT"/' \
               -e '/^burn-autodiff/s/workspace = true/version = "0.20"/' \
-              -e '/^burn-wgpu/s/workspace = true/version = "0.20", default-features = false/' \
-              -e '/^burn /s/workspace = true/version = "0.20", default-features = false/' \
+              -e '/^burn-wgpu/s/workspace = true/version = "0.20"/' \
+              -e '/^burn /s/workspace = true/version = "0.20"/' \
               -e '/^serde_json/s/workspace = true/version = "1.0"/' \
               -e '/^serde /s/workspace = true/version = "1.0", features = ["derive"]/' \
               "$f" > "$f.tmp" && mv "$f.tmp" "$f"
