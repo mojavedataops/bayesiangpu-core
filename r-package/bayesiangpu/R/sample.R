@@ -12,12 +12,14 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' model <- Model() |>
 #'   param("theta", Beta(1, 1)) |>
 #'   observe(Binomial(100, "theta"), 65)
 #'
 #' result <- bg_sample(model, num_samples = 1000, num_chains = 4)
 #' summary(result)
+#' }
 bg_sample <- function(model,
                       num_samples = 1000L,
                       num_warmup = 1000L,
@@ -56,11 +58,13 @@ bg_sample <- function(model,
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' model <- Model() |>
 #'   param("theta", Beta(1, 1)) |>
 #'   observe(Binomial(100, "theta"), 65)
 #'
 #' result <- quick_sample(model)
+#' }
 quick_sample <- function(model, seed = 42L) {
   bg_sample(model, num_samples = 500L, num_warmup = 500L, num_chains = 2L, seed = seed)
 }

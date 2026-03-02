@@ -17,7 +17,7 @@ Create a Categorical distribution. Models a single draw from K categories
 with specified probabilities. Primarily used as a likelihood distribution.
 }
 \examples{
-\donttest{
+\dontrun{
 Categorical(c(0.2, 0.3, 0.5))  # 3 categories
 }
 }

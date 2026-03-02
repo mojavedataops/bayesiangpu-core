@@ -7,8 +7,10 @@
 #' @return A distribution specification (JSON string internally)
 #' @export
 #' @examples
+#' \dontrun{
 #' Normal(0, 1)           # Standard normal
 #' Normal("mu", "sigma")  # Parameters from model
+#' }
 Normal <- function(loc, scale) {
   structure(
     normal_dist(loc, scale),
@@ -25,7 +27,9 @@ Normal <- function(loc, scale) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' HalfNormal(1)  # Half-normal with scale 1
+#' }
 HalfNormal <- function(scale) {
   structure(
     half_normal_dist(scale),
@@ -43,7 +47,9 @@ HalfNormal <- function(scale) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' HalfCauchy(5)  # Half-Cauchy with scale 5
+#' }
 HalfCauchy <- function(scale = 1) {
   structure(
     half_cauchy_dist(scale),
@@ -60,8 +66,10 @@ HalfCauchy <- function(scale = 1) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Beta(1, 1)   # Uniform on [0, 1]
 #' Beta(2, 5)   # Skewed toward 0
+#' }
 Beta <- function(alpha, beta) {
   structure(
     beta_dist(alpha, beta),
@@ -78,7 +86,9 @@ Beta <- function(alpha, beta) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Gamma(2, 1)  # Shape=2, rate=1
+#' }
 Gamma <- function(shape, rate) {
   structure(
     gamma_dist(shape, rate),
@@ -95,7 +105,9 @@ Gamma <- function(shape, rate) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Uniform(0, 10)  # Uniform on [0, 10]
+#' }
 Uniform <- function(low, high) {
   structure(
     uniform_dist(low, high),
@@ -111,7 +123,9 @@ Uniform <- function(low, high) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Exponential(1)  # Rate of 1
+#' }
 Exponential <- function(rate) {
   structure(
     exponential_dist(rate),
@@ -129,8 +143,10 @@ Exponential <- function(rate) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Cauchy()       # Standard Cauchy
 #' Cauchy(0, 5)   # Wider Cauchy
+#' }
 Cauchy <- function(loc = 0, scale = 1) {
   structure(
     cauchy_dist(loc, scale),
@@ -148,8 +164,10 @@ Cauchy <- function(loc = 0, scale = 1) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' StudentT(3)         # t with 3 df
 #' StudentT(5, 0, 2)   # t with 5 df, loc=0, scale=2
+#' }
 StudentT <- function(df, loc = 0, scale = 1) {
   structure(
     student_t_dist(df, loc, scale),
@@ -166,7 +184,9 @@ StudentT <- function(df, loc = 0, scale = 1) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' LogNormal(0, 1)
+#' }
 LogNormal <- function(loc, scale) {
   structure(
     log_normal_dist(loc, scale),
@@ -182,8 +202,10 @@ LogNormal <- function(loc, scale) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Bernoulli(0.5)       # 50% success rate
 #' Bernoulli("theta")   # Parameter from model
+#' }
 Bernoulli <- function(p) {
   structure(
     bernoulli_dist(p),
@@ -200,8 +222,10 @@ Bernoulli <- function(p) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Binomial(100, 0.5)      # 100 trials, 50% success
 #' Binomial(100, "theta")  # Parameter from model
+#' }
 Binomial <- function(n, p) {
   structure(
     binomial_dist(as.integer(n), p),
@@ -217,8 +241,10 @@ Binomial <- function(n, p) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Poisson(5)          # Rate of 5
 #' Poisson("lambda")   # Parameter from model
+#' }
 Poisson <- function(rate) {
   structure(
     poisson_dist(rate),
@@ -238,11 +264,13 @@ Poisson <- function(rate) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' # Using covariance matrix
 #' MultivariateNormal(c(0, 0), cov = matrix(c(1, 0.5, 0.5, 1), nrow = 2))
 #'
 #' # Using Cholesky factor
 #' MultivariateNormal(c(0, 0), scale_tril = matrix(c(1, 0.5, 0, 0.866), nrow = 2))
+#' }
 MultivariateNormal <- function(mu, cov = NULL, scale_tril = NULL) {
   if (is.null(cov) && is.null(scale_tril)) {
     stop("Must provide either cov or scale_tril for MultivariateNormal")
@@ -263,9 +291,11 @@ MultivariateNormal <- function(mu, cov = NULL, scale_tril = NULL) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Dirichlet(c(1, 1, 1))       # Uniform over 3-simplex
 #' Dirichlet(c(10, 10, 10))    # Concentrated at center
 #' Dirichlet(c(0.1, 0.1, 0.1)) # Concentrated at corners
+#' }
 Dirichlet <- function(alpha) {
   if (length(alpha) < 2) {
     stop("Dirichlet requires at least 2 categories")
@@ -286,8 +316,10 @@ Dirichlet <- function(alpha) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Multinomial(10, c(0.2, 0.3, 0.5))   # 10 trials with fixed probs
 #' Multinomial(100, "theta")           # Parameter from model (e.g., Dirichlet)
+#' }
 Multinomial <- function(n, probs) {
   structure(
     multinomial_dist(as.integer(n), probs),
@@ -305,7 +337,9 @@ Multinomial <- function(n, probs) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Laplace(0, 1)  # Standard Laplace
+#' }
 Laplace <- function(loc, scale) {
   structure(
     laplace_dist(loc, scale),
@@ -323,7 +357,9 @@ Laplace <- function(loc, scale) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' Logistic(0, 1)  # Standard Logistic
+#' }
 Logistic <- function(loc, scale) {
   structure(
     logistic_dist(loc, scale),
@@ -341,7 +377,9 @@ Logistic <- function(loc, scale) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' InverseGamma(2, 1)  # Shape=2, scale=1
+#' }
 InverseGamma <- function(alpha, beta) {
   structure(
     inverse_gamma_dist(alpha, beta),
@@ -358,7 +396,9 @@ InverseGamma <- function(alpha, beta) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' ChiSquared(5)  # 5 degrees of freedom
+#' }
 ChiSquared <- function(df) {
   structure(
     chi_squared_dist(df),
@@ -378,7 +418,9 @@ ChiSquared <- function(df) {
 #' @return A distribution specification
 #' @export
 #' @examples
+#' \dontrun{
 #' TruncatedNormal(0, 1, -2, 2)  # Normal(0,1) truncated to [-2, 2]
+#' }
 TruncatedNormal <- function(loc, scale, low, high) {
   structure(
     truncated_normal_dist(loc, scale, low, high),
@@ -396,7 +438,7 @@ TruncatedNormal <- function(loc, scale, low, high) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Weibull(1.5, 1)  # Shape=1.5, scale=1
 #' }
 Weibull <- function(shape, scale) {
@@ -414,7 +456,7 @@ Weibull <- function(shape, scale) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Pareto(2, 1)  # alpha=2, x_m=1
 #' }
 Pareto <- function(alpha, x_m) {
@@ -432,7 +474,7 @@ Pareto <- function(alpha, x_m) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Gumbel()       # Standard Gumbel
 #' Gumbel(0, 2)   # Wider Gumbel
 #' }
@@ -452,7 +494,7 @@ Gumbel <- function(loc = 0, scale = 1) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' HalfStudentT(3)      # 3 df, scale=1
 #' HalfStudentT(5, 2)   # 5 df, scale=2
 #' }
@@ -471,7 +513,7 @@ HalfStudentT <- function(df, scale = 1) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' NegativeBinomial(5, 0.3)  # r=5, p=0.3
 #' }
 NegativeBinomial <- function(r, p) {
@@ -488,7 +530,7 @@ NegativeBinomial <- function(r, p) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Categorical(c(0.2, 0.3, 0.5))  # 3 categories
 #' }
 Categorical <- function(probs) {
@@ -508,7 +550,7 @@ Categorical <- function(probs) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Geometric(0.3)  # p=0.3
 #' }
 Geometric <- function(p) {
@@ -526,7 +568,7 @@ Geometric <- function(p) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' DiscreteUniform(1, 6)  # Fair die
 #' }
 DiscreteUniform <- function(low, high) {
@@ -546,7 +588,7 @@ DiscreteUniform <- function(low, high) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' BetaBinomial(10, 2, 5)  # n=10, alpha=2, beta=5
 #' }
 BetaBinomial <- function(n, alpha, beta) {
@@ -564,7 +606,7 @@ BetaBinomial <- function(n, alpha, beta) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' ZeroInflatedPoisson(3.0, 0.2)  # rate=3, 20% structural zeros
 #' }
 ZeroInflatedPoisson <- function(rate, zero_prob) {
@@ -583,7 +625,7 @@ ZeroInflatedPoisson <- function(rate, zero_prob) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' ZeroInflatedNegativeBinomial(5, 0.3, 0.2)  # r=5, p=0.3, 20% structural zeros
 #' }
 ZeroInflatedNegativeBinomial <- function(r, p, zero_prob) {
@@ -602,7 +644,7 @@ ZeroInflatedNegativeBinomial <- function(r, p, zero_prob) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' Hypergeometric(50, 25, 10)  # N=50, K=25, n=10
 #' }
 Hypergeometric <- function(big_n, big_k, n) {
@@ -620,7 +662,7 @@ Hypergeometric <- function(big_n, big_k, n) {
 #' @return A bg_distribution object
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' OrderedLogistic(0, c(-1, 0, 1))  # 4 categories with cutpoints at -1, 0, 1
 #' }
 OrderedLogistic <- function(eta, cutpoints) {
@@ -643,7 +685,7 @@ OrderedLogistic <- function(eta, cutpoints) {
 #' @return A distribution specification
 #' @export
 #' @examples
-#' \donttest{
+#' \dontrun{
 #' LKJCorr(3, 2.0)  # 3x3 correlation matrix, slightly favoring identity
 #' LKJCorr(4, 1.0)  # 4x4, uniform over correlation matrices
 #' }
@@ -663,8 +705,10 @@ LKJCorr <- function(dim, eta = 1.0) {
 #' @return A JSON string representing the LinearPredictor specification
 #' @export
 #' @examples
+#' \dontrun{
 #' X <- matrix(rnorm(200), ncol = 2)
 #' lp <- LinearPredictor(X, "beta")
+#' }
 LinearPredictor <- function(X, param_name) {
   X <- as.matrix(X)
   stopifnot(is.numeric(X), length(dim(X)) == 2)

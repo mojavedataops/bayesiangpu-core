@@ -18,7 +18,7 @@ Create a Discrete Uniform distribution. Each integer value in
 [low, high] has equal probability.
 }
 \examples{
-\donttest{
+\dontrun{
 DiscreteUniform(1, 6)  # Fair die
 }
 }

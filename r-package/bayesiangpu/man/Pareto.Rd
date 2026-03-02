@@ -18,7 +18,7 @@ Create a Pareto distribution. Used for modeling heavy-tailed phenomena
 such as wealth distribution and city sizes.
 }
 \examples{
-\donttest{
+\dontrun{
 Pareto(2, 1)  # alpha=2, x_m=1
 }
 }

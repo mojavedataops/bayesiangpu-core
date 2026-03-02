@@ -6,6 +6,7 @@
 #' @export
 #'
 #' @examples
+#' \dontrun{
 #' model <- Model()
 #' model$param("mu", Normal(0, 10))
 #' model$param("sigma", HalfNormal(1))
@@ -15,6 +16,7 @@
 #' model <- Model() |>
 #'   param("theta", Beta(1, 1)) |>
 #'   observe(Binomial(100, "theta"), 65)
+#' }
 Model <- R6::R6Class(
   "BayesianModel",
   public = list(

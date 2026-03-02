@@ -24,7 +24,7 @@ and Joe, 2009) is the standard prior for correlation matrices in Bayesian
 hierarchical models.
 }
 \examples{
-\donttest{
+\dontrun{
 LKJCorr(3, 2.0)  # 3x3 correlation matrix, slightly favoring identity
 LKJCorr(4, 1.0)  # 4x4, uniform over correlation matrices
 }

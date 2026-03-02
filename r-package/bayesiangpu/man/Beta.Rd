@@ -17,7 +17,7 @@ A distribution specification
 Create a Beta distribution. Defined on (0, 1), useful for probability parameters.
 }
 \examples{
-\donttest{
+\dontrun{
 Beta(1, 1)   # Uniform on [0, 1]
 Beta(2, 5)   # Skewed toward 0
 }

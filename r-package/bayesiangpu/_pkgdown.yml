@@ -57,6 +57,7 @@ reference:
       - Model
       - param
       - observe
+      - LinearPredictor
 
   - title: "Sampling"
     contents:

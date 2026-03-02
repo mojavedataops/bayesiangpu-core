@@ -28,7 +28,7 @@ An InferenceResult object
 Run the No-U-Turn Sampler (NUTS) on a Bayesian model.
 }
 \examples{
-\donttest{
+\dontrun{
 model <- Model() |>
   param("theta", Beta(1, 1)) |>
   observe(Binomial(100, "theta"), 65)

@@ -18,7 +18,7 @@ Create a Cauchy distribution. Heavy-tailed distribution useful for
 weakly informative priors.
 }
 \examples{
-\donttest{
+\dontrun{
 Cauchy()       # Standard Cauchy
 Cauchy(0, 5)   # Wider Cauchy
 }

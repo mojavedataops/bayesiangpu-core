@@ -18,7 +18,7 @@ Create a Weibull distribution. Commonly used for survival analysis
 and reliability modeling.
 }
 \examples{
-\donttest{
+\dontrun{
 Weibull(1.5, 1)  # Shape=1.5, scale=1
 }
 }

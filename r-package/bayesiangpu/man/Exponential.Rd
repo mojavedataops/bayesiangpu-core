@@ -16,7 +16,7 @@ A distribution specification
 Create an Exponential distribution. For waiting times and durations.
 }
 \examples{
-\donttest{
+\dontrun{
 Exponential(1)  # Rate of 1
 }
 }

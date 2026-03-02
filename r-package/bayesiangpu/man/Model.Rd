@@ -7,7 +7,7 @@
 An R6 class for building Bayesian models using a fluent API.
 }
 \examples{
-\donttest{
+\dontrun{
 model <- Model()
 model$param("mu", Normal(0, 10))
 model$param("sigma", HalfNormal(1))

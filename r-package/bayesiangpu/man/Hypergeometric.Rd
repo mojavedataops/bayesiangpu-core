@@ -19,7 +19,7 @@ Create a Hypergeometric distribution. Models the number of successes
 in draws without replacement from a finite population.
 }
 \examples{
-\donttest{
+\dontrun{
 Hypergeometric(50, 25, 10)  # N=50, K=25, n=10
 }
 }

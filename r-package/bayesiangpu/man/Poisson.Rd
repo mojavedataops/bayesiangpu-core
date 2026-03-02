@@ -16,7 +16,7 @@ A distribution specification
 Create a Poisson distribution for count data.
 }
 \examples{
-\donttest{
+\dontrun{
 Poisson(5)          # Rate of 5
 Poisson("lambda")   # Parameter from model
 }

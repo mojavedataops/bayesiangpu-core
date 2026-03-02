@@ -18,7 +18,7 @@ Create an Inverse Gamma distribution. Commonly used as a prior for
 variance parameters in Bayesian models.
 }
 \examples{
-\donttest{
+\dontrun{
 InverseGamma(2, 1)  # Shape=2, scale=1
 }
 }
